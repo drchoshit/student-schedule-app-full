@@ -1,12 +1,14 @@
 // frontend/src/axiosInstance.js
 import axios from "axios";
 
-// ✅ 현재 호스트 이름에 따라 baseURL 결정
-const isRender = window.location.hostname.includes("onrender.com");
-const baseURL = isRender ? "/api" : "http://localhost:5000/api";
+// ✅ 환경 구분 (배포 vs 개발)
+const isRender = typeof window !== "undefined" && window.location.hostname.includes("onrender.com");
+
+// ✅ Render 배포용 기본 주소
+const renderBaseURL = "https://student-schedule-app-full.onrender.com/api";
 
 const axiosInstance = axios.create({
-  baseURL,
+  baseURL: isRender ? renderBaseURL : "/api",
   withCredentials: true,
   headers: {
     "Content-Type": "application/json"
@@ -21,7 +23,7 @@ axiosInstance.interceptors.request.use(
       const token = localStorage.getItem("adminToken");
       if (token && token !== "null") {
         config.headers = config.headers || {};
-        config.headers['Authorization'] = `Bearer ${token}`;
+        config.headers["Authorization"] = `Bearer ${token}`;
       }
     } catch (_) {
       // 로컬스토리지 접근 실패해도 무시
@@ -36,7 +38,7 @@ axiosInstance.interceptors.response.use(
   (res) => res,
   (error) => {
     if (error?.response?.status === 401 || error?.response?.status === 403) {
-      // 👉 옵션: 자동 로그아웃 로직
+      // 자동 로그아웃 옵션
       // localStorage.removeItem("adminToken");
       // window.location.href = "/admin/login";
     }
