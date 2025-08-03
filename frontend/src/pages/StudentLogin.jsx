@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 // import api from "../axiosInstance"; ❌ axiosInstance 사용 안 함
-import axios from "axios"; // ✅ axios 직접 import
+import axiosInstance from "../axiosInstance"; // ✅
 import { useNavigate, useLocation } from "react-router-dom";
 
 export default function StudentLogin() {
@@ -12,8 +12,6 @@ export default function StudentLogin() {
   const location = useLocation();
   const nameInputRef = useRef(null);
   const codeInputRef = useRef(null);
-
-  const API_URL = "http://localhost:5000"; // ✅ 로컬 환경 API 주소
 
   // ✅ 이미 로그인되어 있으면 스케줄 페이지로 보내기 (원치 않으면 주석 처리)
   useEffect(() => {
@@ -58,7 +56,7 @@ export default function StudentLogin() {
     setLoading(true); // ✅ 로딩 시작
     try {
       // ✅ axios + 절대경로 사용
-      const res = await axios.post(`${API_URL}/api/student/login`, {
+      const res = await axiosInstance.post("/student/login", {
         name: nameTrim,
         code: codeTrim,
       });
