@@ -96,7 +96,7 @@ const killProcessOnPort = (port) => {
     if (!isRender) killProcessOnPort(5000);
 
     // ⬇️ 로컬은 __dirname 기준으로 DB 파일 경로 고정 (상대경로 이슈 방지)
-    const DB_FILE = process.env.RENDER && false  // ⚠️ 디스크 임시 비활성화
+    const DB_FILE = process.env.RENDER
       ? "/data/database.sqlite"
       : path.join(__dirname, "database.sqlite");
 
