@@ -1,8 +1,12 @@
 // frontend/src/axiosInstance.js
 import axios from "axios";
 
+// ✅ 현재 호스트 이름에 따라 baseURL 결정
+const isRender = window.location.hostname.includes("onrender.com");
+const baseURL = isRender ? "/api" : "http://localhost:5000/api";
+
 const axiosInstance = axios.create({
-  baseURL: "/api", // ✅ 상대 경로 사용 → 배포 시에도 정상 작동
+  baseURL,
   withCredentials: true,
   headers: {
     "Content-Type": "application/json"
@@ -15,7 +19,7 @@ axiosInstance.interceptors.request.use(
   (config) => {
     try {
       const token = localStorage.getItem("adminToken");
-      if (token && token !== "null") { // ✅ "null" 문자열 예외 처리
+      if (token && token !== "null") {
         config.headers = config.headers || {};
         config.headers['Authorization'] = `Bearer ${token}`;
       }
