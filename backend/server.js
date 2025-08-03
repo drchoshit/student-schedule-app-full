@@ -21,15 +21,16 @@ import smsRoutes from "./routes/sms.js"; // ✅ 문자 발송 라우트 추가
 import { execSync } from "child_process";
 
 // ✅ 배포 감지 기준 통일 (Render는 PORT를 항상 제공)
-const IS_RENDER = !!process.env.PORT;
+const isProduction = process.env.NODE_ENV === "production" || IS_RENDER;
 
-const app = express();
-if (process.env.NODE_ENV !== "production") {
-  // 프론트 개발 서버 포트(5176)에서 오는 요청 허용
+if (!isProduction) {
   app.use(cors({ origin: "http://localhost:5173", credentials: true }));
 } else {
-  // 배포 환경(Render 등) — 앞단 프록시가 있을 수 있어 일단 개방, 필요 시 화이트리스트 적용
-  app.use(cors());
+  // 배포 환경: credentials 허용 + origin을 자동 설정
+  app.use(cors({
+    origin: true,  // 요청한 Origin을 그대로 반영
+    credentials: true
+  }));
 }
 app.use(express.json({ limit: "2mb" })); // ✅ JSON 바디 제한(필요 시 상향)
 
