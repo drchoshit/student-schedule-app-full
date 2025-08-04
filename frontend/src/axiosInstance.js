@@ -6,9 +6,7 @@ const isRender = window.location.hostname.includes("onrender.com");
 
 // baseURL 설정: Render에 배포된 경우와 로컬 개발을 자동 구분
 const axiosInstance = axios.create({
-  baseURL: isRender
-    ? "https://student-schedule-app-full.onrender.com/api" // ✅ Render 백엔드 주소
-    : "http://localhost:5000/api", // ✅ 로컬 백엔드 주소
+  baseURL: isProduction ? "/api" : "http://localhost:5000/api",
   withCredentials: true,
   headers: {
     "Content-Type": "application/json",

@@ -23,7 +23,7 @@ import { execSync } from "child_process";
 const app = express();  // ← 이 줄이 있어야 app.use(...) 호출 가능
 
 // ✅ 배포 감지 기준 통일 (Render는 PORT를 항상 제공)
-const isProduction = process.env.NODE_ENV === "production" || IS_RENDER;
+const isProduction = process.env.NODE_ENV === "production";
 
 if (!isProduction) {
   app.use(cors({ origin: "http://localhost:5173", credentials: true }));
