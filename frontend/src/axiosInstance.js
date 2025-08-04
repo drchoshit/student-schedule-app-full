@@ -6,7 +6,7 @@ const isRender = window.location.hostname.includes("onrender.com");
 
 // baseURL 설정: Render에 배포된 경우와 로컬 개발을 자동 구분
 const axiosInstance = axios.create({
-  baseURL: isProduction ? "/api" : "http://localhost:5000/api",
+  baseURL: "/api", // ✅ Render 배포 시 동일 출처로 요청
   withCredentials: true,
   headers: {
     "Content-Type": "application/json",
