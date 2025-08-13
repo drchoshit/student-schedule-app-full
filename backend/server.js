@@ -5,6 +5,7 @@ dotenv.config({ path: './backend/.env' }); // 경로 명시
 import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const IS_RENDER = !!process.env.PORT; // ✅ 추가
 
 console.log("📂 현재 실행 경로:", process.cwd());
 console.log("✅ env 테스트 (API KEY):", process.env.COOLSMS_API_KEY || "값 없음");
@@ -150,6 +151,21 @@ const killProcessOnPort = (port) => {
         description TEXT
       )
     `);
+
+    /* ⬇⬇⬇ 여기서부터 추가: schedules 마이그레이션 (week_start / saved_at) */
+    const schedCols = await db.all(`PRAGMA table_info(schedules)`);
+    const hasWeekStart = schedCols.some((c) => c.name === "week_start");
+    const hasSavedAt   = schedCols.some((c) => c.name === "saved_at");
+
+    if (!hasWeekStart) {
+      await db.exec(`ALTER TABLE schedules ADD COLUMN week_start TEXT`);
+      console.log("✅ schedules.week_start 컬럼 추가");
+    }
+    if (!hasSavedAt) {
+      await db.exec(`ALTER TABLE schedules ADD COLUMN saved_at TEXT`);
+      console.log("✅ schedules.saved_at 컬럼 추가");
+    }
+    /* ⬆⬆⬆ 추가 끝 */
 
     // ✅ admins 테이블 (role 추가)
     await db.exec(`

@@ -6,18 +6,14 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
-    strictPort: true,
-    open: true,
     proxy: {
       "/api": {
-        target: "http://localhost:5000", // 백엔드 포트
+        target: "http://localhost:5000", // ✅ server.js가 여기에 뜸
         changeOrigin: true,
-        secure: false,                  // HTTP일 때 안전하게 연결
-        // rewrite: path => path,       // 경로 그대로 유지 (기본값)
+        secure: false,
+        // ✅ /api 프리픽스는 백엔드 마운트 경로와 일치하므로 절대 지우지 말기
+        // rewrite: (path) => path.replace(/^\/api/, ""), // ❌ 제거
       },
     },
-  },
-  preview: {
-    port: 5173,
   },
 });

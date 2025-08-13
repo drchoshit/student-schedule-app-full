@@ -1,3 +1,4 @@
+// frontend/src/pages/AdminDashboard.jsx
 import React, { useEffect, useState } from "react";
 import * as XLSX from "xlsx"; // ⬅️⬅️ 추가: 엑셀 파서
 import { useNavigate } from "react-router-dom"; // ✅ useNavigate 추가
@@ -395,6 +396,24 @@ export default function AdminDashboard() {
     // ✅ 이름 정렬 상태 (Hook은 최상단에서만 선언!)
     const [nameSort, setNameSort] = useState('asc');
 
+    // ✅ 높이 자동 맞춤 (검색창 ↔ Delete All 버튼)
+    useEffect(() => {
+      const syncHeights = () => {
+        const input = document.querySelector('input[placeholder="학생 이름 검색"]');
+        const btn = Array.from(document.querySelectorAll("button")).find(
+          (b) => (b.textContent || "").trim() === "Delete All"
+        );
+        if (input && btn) {
+          const h = Math.max(input.offsetHeight, btn.offsetHeight);
+          input.style.height = `${h}px`;
+          btn.style.height = `${h}px`;
+        }
+      };
+      syncHeights();
+      window.addEventListener("resize", syncHeights);
+      return () => window.removeEventListener("resize", syncHeights);
+    }, []);
+
     if (loading) return <div className="p-4 text-center text-lg">⏳ 데이터 로딩 중...</div>;
 
     // ✅ 검색 + 정렬 적용된 학생 목록
@@ -686,7 +705,7 @@ export default function AdminDashboard() {
   function parseTimeRanges(cellText) {
     const text = String(cellText || "");
 
-    // 쉼표/세미콜론/全각세미콜론/슬래시/개행 등으로 끊어서 각각 처리
+    // 쉼표/세미콜론/全角세미콜론/슬래시/개행 등으로 끊어서 각각 처리
     const parts = text
       .split(/[,，;；\/\n]+/)
       .map((s) => s.trim())
@@ -818,6 +837,7 @@ export default function AdminDashboard() {
     setCalendarEvents(events);
     setCalendarOpen(true); // ✅ 수정: 잘못된 setIsCalendarOpen → setCalendarOpen
   };
+
 
   return (
     <div className="p-4 max-w-6xl mx-auto">
@@ -1027,6 +1047,26 @@ export default function AdminDashboard() {
         </tbody>
       </table>
 
+      {/* ✅✅ 추가 섹션: 학생별 센터 재원 시간 요약 (요일/날짜 + 미등원 표시) */}
+      <div className="border p-4 mb-6 rounded">
+        <h2 className="text-lg font-semibold mb-3">학생별 센터 재원 요약</h2>
+        <CenterSummaryTable
+          students={students}
+          schedules={schedules}
+          weekRangeText={settings?.week_range_text || ""}
+        />
+      </div>
+
+      {/* ✅✅ 추가 섹션: 학생별 ‘첫 등원 시간’ 요약 */}
+      <div className="border p-4 mb-6 rounded">
+        <h2 className="text-lg font-semibold mb-3">학생별 첫 등원 시간</h2>
+        <FirstArrivalTable
+          students={students}
+          schedules={schedules}
+          weekRangeText={settings?.week_range_text || ""}
+        />
+      </div>
+
         <div className="border p-4 mb-6 rounded">
           <h2 className="text-lg font-semibold mb-2">페이지 설정</h2>
           <div className="grid grid-cols-2 gap-4">
@@ -1100,7 +1140,8 @@ export default function AdminDashboard() {
                 });
 
                 const updatedList = students.map((s) =>
-                  s.id === updated.id ? { ...s, ...updated } : s
+                  s.id === updated.id ? { ...s, ...updated }
+                : s
                 );
                 setStudents(updatedList);
                 localStorage.setItem("students", JSON.stringify(updatedList));
@@ -1116,3 +1157,264 @@ export default function AdminDashboard() {
     </div>
   );
 } // 컴포넌트 끝
+
+
+/* =========================
+   ⬇⬇ 보조 함수/컴포넌트 (추가)
+   ========================= */
+
+// 주차 텍스트("8/11~8/16")에서 월~일 날짜 라벨 생성
+function getWeekDateLabels(rangeText = "") {
+  const m = String(rangeText).match(/(\d{1,2})\/(\d{1,2})\s*~\s*(\d{1,2})\/(\d{1,2})/);
+  if (!m) return ["", "", "", "", "", "", ""];
+  const year = new Date().getFullYear();
+  const start = new Date(year, Number(m[1]) - 1, Number(m[2]));
+  const labels = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    labels.push(`${d.getMonth() + 1}/${d.getDate()}`);
+  }
+  return labels;
+}
+
+// ✅ (기존 유지) schedules에서 type==="센터"만 모아 학생/요일별로 "HH:MM~HH:MM, ..." 문자열 생성
+function buildCenterSummaryRows(students = [], schedules = []) {
+  const dayOrder = ["월", "화", "수", "목", "금", "토", "일"];
+  const map = new Map();
+
+  (schedules || [])
+    .filter((it) => (it.type || "") === "센터")
+    .forEach((it) => {
+      const sid = it.student_id;
+      if (!map.has(sid)) map.set(sid, {});
+      const byDay = map.get(sid);
+      if (!byDay[it.day]) byDay[it.day] = [];
+      byDay[it.day].push({ s: it.start, e: it.end });
+    });
+
+  function mergeRanges(ranges) {
+    if (!ranges || !ranges.length) return "";
+    const toMin = (t) => {
+      const [H, M] = String(t).split(":").map((n) => parseInt(n, 10));
+      return H * 60 + M;
+    };
+    const fromMin = (m) =>
+      `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+
+    const arr = ranges
+      .map((r) => ({ s: toMin(r.s), e: toMin(r.e) }))
+      .filter((r) => r.s < r.e)
+      .sort((a, b) => a.s - b.s);
+
+    const merged = [];
+    for (const cur of arr) {
+      if (!merged.length || merged[merged.length - 1].e < cur.s) merged.push({ ...cur });
+      else merged[merged.length - 1].e = Math.max(merged[merged.length - 1].e, cur.e);
+    }
+    return merged.map((r) => `${fromMin(r.s)}~${fromMin(r.e)}`).join(", ");
+  }
+
+  return (students || []).map((stu) => {
+    const row = { id: stu.id, name: stu.name || stu.id };
+    const byDay = map.get(stu.id) || {};
+    dayOrder.forEach((d) => {
+      row[d] = mergeRanges(byDay[d]);
+    });
+    return row;
+  });
+}
+
+/* ✅ 새로 추가: 센터 집계 + '미등원' 자동 반영 + 첫 등원 시간 계산 */
+function buildCenterAggWithAbsent(students = [], schedules = []) {
+  const dayOrder = ["월", "화", "수", "목", "금", "토", "일"];
+
+  // 미등원 표시 세트 (type이 '미등원' 이거나 description에 '미등원' 포함 시)
+  const absentSet = new Set();
+  (schedules || []).forEach((it) => {
+    const t = (it.type || "").trim();
+    const desc = (it.description || "").trim();
+    if (t === "미등원" || /미등원/.test(desc)) {
+      absentSet.add(`${it.student_id}::${it.day}`);
+    }
+  });
+
+  // 학생/요일별 센터 구간
+  const centerBy = new Map();
+  (schedules || [])
+    .filter((it) => (it.type || "") === "센터")
+    .forEach((it) => {
+      const sid = it.student_id;
+      if (!centerBy.has(sid)) centerBy.set(sid, {});
+      const byDay = centerBy.get(sid);
+      if (!byDay[it.day]) byDay[it.day] = [];
+      byDay[it.day].push({ start: it.start, end: it.end });
+    });
+
+  // 유틸
+  const toMin = (hhmm) => {
+    const [h, m] = String(hhmm).split(":").map((n) => parseInt(n, 10));
+    return h * 60 + m;
+  };
+  const fromMin = (mm) => `${String(Math.floor(mm / 60)).padStart(2, "0")}:${String(mm % 60).padStart(2, "0")}`;
+
+  // 결과
+  const rows = [];
+  const firstArrivals = []; // [{id,name, 월: "11:00" | "미등원" | "" ...}]
+
+  (students || []).forEach((stu) => {
+    const sid = stu.id;
+    const byDay = centerBy.get(sid) || {};
+    const row = { id: sid, name: stu.name || sid };          // 전체 구간 표시용
+    const firstRow = { id: sid, name: stu.name || sid };      // 첫 등원 표시용
+
+    dayOrder.forEach((d) => {
+      // 미등원 우선
+      if (absentSet.has(`${sid}::${d}`)) {
+        row[d] = "미등원";
+        firstRow[d] = "미등원";
+        return;
+      }
+      const blocks = (byDay[d] || []).slice();
+
+      if (!blocks.length) {
+        row[d] = "";
+        firstRow[d] = "";
+        return;
+      }
+
+      // 병합해서 문자열 생성
+      const sorted = blocks
+        .map((b) => ({ s: toMin(b.start), e: toMin(b.end) }))
+        .filter((b) => b.s < b.e)
+        .sort((a, b) => a.s - b.s);
+
+      const merged = [];
+      for (const cur of sorted) {
+        if (!merged.length || merged[merged.length - 1].e < cur.s) merged.push({ ...cur });
+        else merged[merged.length - 1].e = Math.max(merged[merged.length - 1].e, cur.e);
+      }
+      row[d] = merged.map((m) => `${fromMin(m.s)}~${fromMin(m.e)}`).join(", ");
+
+      // 첫 등원(가장 이른 시작)
+      firstRow[d] = fromMin(sorted[0].s);
+    });
+
+    rows.push(row);
+    firstArrivals.push(firstRow);
+  });
+
+  return { rows, firstArrivals, absentSet };
+}
+
+// 요약 표 (미등원 버튼은 '숨김' 처리)
+function CenterSummaryTable({ students, schedules, weekRangeText }) {
+  // 기존 로직 보존(사용은 안 해도 유지)
+  const rowsLegacy = buildCenterSummaryRows(students, schedules);
+
+  // 새 집계(미등원 자동 반영)
+  const { rows, absentSet } = buildCenterAggWithAbsent(students, schedules);
+
+  const dateLabels = getWeekDateLabels(weekRangeText);
+  const dayOrder = ["월", "화", "수", "목", "금", "토", "일"];
+
+  // 👉 기존 코드 유지용(버튼을 없애달라 했지만, '삭제'하지 않고 숨김 처리)
+  const SHOW_MANUAL_ABSENT_BUTTON = false;
+
+  return (
+    <div className="overflow-auto">
+      <table className="table-auto w-full border">
+        <thead>
+          <tr className="bg-gray-200 text-center">
+            <th className="border px-2 py-1 w-24">ID</th>
+            <th className="border px-2 py-1 w-28">이름</th>
+            {dayOrder.map((d, idx) => (
+              <th key={d} className="border px-2 py-1">
+                {d}{dateLabels[idx] ? `(${dateLabels[idx]})` : ""}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {(rows.length ? rows : rowsLegacy).map((r) => (
+            <tr key={r.id} className="text-center align-top">
+              <td className="border px-2 py-1">{r.id}</td>
+              <td className="border px-2 py-1">{r.name}</td>
+              {dayOrder.map((d) => {
+                const isAbsentAuto = r[d] === "미등원" || absentSet.has(`${r.id}::${d}`);
+                const cellText = r[d] || "";
+                return (
+                  <td key={d} className="border px-2 py-1">
+                    <div className={`min-h-[2.25rem] ${isAbsentAuto ? "text-red-600 font-semibold" : ""}`}>
+                      {isAbsentAuto ? "미등원" : (cellText || <span className="text-gray-400">—</span>)}
+                    </div>
+                    {/* 기존 '미등원' 토글 버튼은 삭제하지 않고 숨김 처리 */}
+                    <button
+                      type="button"
+                      className={`${SHOW_MANUAL_ABSENT_BUTTON ? "" : "hidden"} mt-1 px-4 py-2 rounded text-sm border`}
+                      title="해당 요일 미등원 표시 (저장 데이터에는 영향 없음)"
+                    >
+                      미등원
+                    </button>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="text-xs text-gray-500 mt-2">
+        * 표는 학생이 입력한 <b>센터</b> 시간만 반영됩니다. “미등원”은 학생 입력을 기준으로 자동 표시됩니다.
+      </p>
+    </div>
+  );
+}
+
+/* ✅ 새 섹션: 학생별 '첫 등원 시간' 표 */
+function FirstArrivalTable({ students, schedules, weekRangeText }) {
+  const { firstArrivals, absentSet } = buildCenterAggWithAbsent(students, schedules);
+  const dayOrder = ["월", "화", "수", "목", "금", "토", "일"];
+  const dateLabels = getWeekDateLabels(weekRangeText);
+
+  return (
+    <div className="overflow-auto">
+      <table className="table-auto w-full border">
+        <thead>
+          <tr className="bg-gray-200 text-center">
+            <th className="border px-2 py-1 w-24">ID</th>
+            <th className="border px-2 py-1 w-28">이름</th>
+            {dayOrder.map((d, idx) => (
+              <th key={d} className="border px-2 py-1">
+                {d}{dateLabels[idx] ? `(${dateLabels[idx]})` : ""}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {firstArrivals.map((r) => (
+            <tr key={r.id} className="text-center">
+              <td className="border px-2 py-1">{r.id}</td>
+              <td className="border px-2 py-1">{r.name}</td>
+              {dayOrder.map((d) => {
+                const isAbsent = r[d] === "미등원" || absentSet.has(`${r.id}::${d}`);
+                const val = r[d];
+                return (
+                  <td key={d} className="border px-2 py-1">
+                    {isAbsent ? (
+                      <span className="text-red-600 font-semibold">미등원</span>
+                    ) : (
+                      <span className="">{val || <span className="text-gray-400">—</span>}</span>
+                    )}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="text-xs text-gray-500 mt-2">
+        * 각 요일에 가장 이른 센터 입실 시각만 표시합니다. 미등원일은 “미등원”으로 표기됩니다.
+      </p>
+    </div>
+  );
+}
