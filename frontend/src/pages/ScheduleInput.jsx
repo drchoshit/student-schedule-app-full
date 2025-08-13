@@ -1097,7 +1097,7 @@ export default function ScheduleInput() {
               onClick={() => openPreview("student")}
               className="border px-3 py-1 rounded text-sm hover:bg-gray-50"
             >
-              학생에게 미리보기
+              문자 전송하기
             </button>
           </div>
           <div className="flex gap-2">
@@ -1112,7 +1112,7 @@ export default function ScheduleInput() {
               onClick={() => openPreview("parent")}
               className="border px-3 py-1 rounded text-sm hover:bg-gray-50"
             >
-              보호자에게 미리보기
+              문자 전송하기
             </button>
           </div>
         </div>

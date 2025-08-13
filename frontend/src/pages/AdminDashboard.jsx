@@ -7,10 +7,49 @@ import StudentDetailModal from "../components/StudentDetailModal"; // ✅ 추가
 import { exportExternalSchedulesToExcel, exportCenterSchedulesToExcel } from "../utils/exportScheduleToExcel";
 import axiosInstance from "../axiosInstance";
 
+/* =========================
+   ✅ 공용 응답 가드 유틸
+   - 항상 JSON만 반환 (HTML/비정상 응답이면 throw)
+   - 401/403이면 /admin/login 으로 보냄
+========================= */
+function useSafeJSON(navigate) {
+  return async function safeJSON(promise) {
+    try {
+      const res = await promise;
+      const ct = res?.headers?.["content-type"] || res?.headers?.get?.("content-type") || "";
+      if (!res || !res.data || (typeof ct === "string" && ct.includes("text/html"))) {
+        throw new Error("Invalid API response");
+      }
+      return res.data;
+    } catch (err) {
+      const status = err?.response?.status;
+      const ct = err?.response?.headers?.["content-type"] || "";
+      // HTML 응답은 경로 문제 가능성 → 콘솔 표시
+      if (ct.includes("text/html")) {
+        // eslint-disable-next-line no-console
+        console.error("[AdminDashboard] HTML response from API:", err?.config?.url);
+      }
+      if (status === 401 || status === 403) {
+        try {
+          localStorage.removeItem("adminToken");
+        } catch {}
+        navigate("/admin/login", { replace: true });
+      }
+      throw err;
+    }
+  };
+}
+
+// ✅ 안전 기본값 도우미
+const arr = (v) => (Array.isArray(v) ? v : []);
+const num = (v) => (typeof v === "number" ? v : Number(v || 0));
+const obj = (v) => (v && typeof v === "object" ? v : {});
+
 export default function AdminDashboard() {
   const navigate = useNavigate(); // ✅ 네비게이션 훅 추가
+  const safeJSON = useSafeJSON(navigate); // ✅ 응답 가드 래퍼
 
-    // ✅ 상태 선언
+  // ✅ 상태 선언
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -31,8 +70,8 @@ export default function AdminDashboard() {
 
   const fetchStudents = async () => {
     try {
-      const res = await axiosInstance.get("/admin/students");
-      setStudents(res.data || []);
+      const data = await safeJSON(axiosInstance.get("/admin/students"));
+      setStudents(arr(data) || []);
     } catch (err) {
       console.error("❌ 학생 목록 불러오기 실패:", err);
       alert("학생 목록을 불러오지 못했습니다.");
@@ -41,6 +80,7 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     fetchStudents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const [schedules, setSchedules] = useState([]);
@@ -64,7 +104,6 @@ export default function AdminDashboard() {
     setIsDetailModalOpen(true);
   };
 
-
   // ✅ 날짜 계산 함수 추가
   const getBaseDate = () => {
     const match = settings.week_range_text.match(/(\d+)\/(\d+)\s*~\s*(\d+)\/(\d+)/);
@@ -81,7 +120,7 @@ export default function AdminDashboard() {
   useEffect(() => {
     const token = localStorage.getItem("adminToken");
     if (!token) {
-      navigate("/admin-login");
+      navigate("/admin/login");
       return; // ✅ 인증 없으면 API 요청도 중단
     }
   }, [navigate]);
@@ -90,21 +129,21 @@ export default function AdminDashboard() {
   useEffect(() => {
     const token = localStorage.getItem("adminToken");
     if (!token) {
-      navigate("/admin-login");
+      navigate("/admin/login");
       return;
     }
 
     const load = async () => {
       try {
-        const [settingRes, studentRes, scheduleRes] = await Promise.all([
-          axiosInstance.get(`/admin/settings`, { params: { _t: Date.now() } }),
-          axiosInstance.get(`/admin/students`, { params: { _t: Date.now() } }),
-          axiosInstance.get(`/admin/schedules`, { params: { _t: Date.now() } }),
+        const [settingsData, studentsData, schedulesData] = await Promise.all([
+          safeJSON(axiosInstance.get(`/admin/settings`, { params: { _t: Date.now() } })),
+          safeJSON(axiosInstance.get(`/admin/students`, { params: { _t: Date.now() } })),
+          safeJSON(axiosInstance.get(`/admin/schedules`, { params: { _t: Date.now() } })),
         ]);
 
-        const newSettings  = settingRes.data || {};
-        const newStudents  = studentRes.data || [];
-        const newSchedules = scheduleRes.data || [];
+        const newSettings  = obj(settingsData);
+        const newStudents  = arr(studentsData);
+        const newSchedules = arr(schedulesData);
 
         setSettings(newSettings);
         setStudents(newStudents);
@@ -113,9 +152,9 @@ export default function AdminDashboard() {
         // ⬇️ 학생별 요약 재작성
         const byStudent = new Map();
         for (const s of newSchedules) {
-          const arr = byStudent.get(s.student_id) || [];
-          arr.push({ day: s.day, start: s.start, end: s.end, type: s.type });
-          byStudent.set(s.student_id, arr);
+          const a = byStudent.get(s.student_id) || [];
+          a.push({ day: s.day, start: s.start, end: s.end, type: s.type });
+          byStudent.set(s.student_id, a);
         }
         const nextStudentSchedules = newStudents.map((stu) => ({
           id: stu.id,
@@ -123,7 +162,7 @@ export default function AdminDashboard() {
           schedule: byStudent.get(stu.id) || [],
         }));
         setStudentSchedules(nextStudentSchedules);
-        localStorage.setItem("studentSchedules", JSON.stringify(nextStudentSchedules));
+        try { localStorage.setItem("studentSchedules", JSON.stringify(nextStudentSchedules)); } catch {}
 
         // ⬇️ 캘린더 이벤트 재생성
         const baseDate = getBaseDate();
@@ -147,8 +186,8 @@ export default function AdminDashboard() {
         const code = err?.response?.status;
         if (code === 401 || code === 403) {
           alert("인증이 만료되었습니다. 다시 로그인하세요.");
-          localStorage.removeItem("adminToken");
-          navigate("/admin-login");
+          try { localStorage.removeItem("adminToken"); } catch {}
+          navigate("/admin/login");
         } else {
           alert("데이터 로드 중 오류가 발생했습니다.");
         }
@@ -166,38 +205,38 @@ export default function AdminDashboard() {
     setSettings((prev) => ({ ...prev, [field]: value }));
   };
 
-    const saveSettings = async () => {
-      try {
-        const token = localStorage.getItem("adminToken");
-        if (!token) {
-          alert("관리자 인증이 필요합니다. 다시 로그인해주세요.");
-          navigate("/admin-login");
-          return;
-        }
-
-        // ✅ settings 저장 요청
-        const res = await axiosInstance.put("/admin/settings", settings);
-
-        // ✅ 서버가 돌려준 최신 settings로 상태 갱신
-        if (res.data?.success) {
-          if (res.data.settings) {
-            setSettings(res.data.settings);
-          } else {
-            // 혹시 서버가 settings를 못 돌려줬으면, 한 번 더 GET
-            const refetch = await axiosInstance.get(`/admin/settings`);
-            setSettings(refetch.data || {});
-          }
-          alert("✅ 설정이 저장되어 학생 페이지에 반영됩니다.");
-        } else {
-          alert(res.data?.error || "설정 저장 실패(알 수 없는 오류)");
-        }
-      } catch (err) {
-        console.error("설정 저장 오류:", err);
-        alert(
-          `설정 저장 실패: ${err.response?.status || ""} ${err.response?.data?.error || err.message}`
-        );
+  const saveSettings = async () => {
+    try {
+      const token = localStorage.getItem("adminToken");
+      if (!token) {
+        alert("관리자 인증이 필요합니다. 다시 로그인해주세요.");
+        navigate("/admin/login");
+        return;
       }
-    };
+
+      // ✅ settings 저장 요청
+      const res = await axiosInstance.put("/admin/settings", settings);
+
+      // ✅ 서버가 돌려준 최신 settings로 상태 갱신
+      if (res.data?.success) {
+        if (res.data.settings) {
+          setSettings(res.data.settings);
+        } else {
+          // 혹시 서버가 settings를 못 돌려줬으면, 한 번 더 GET
+          const data = await safeJSON(axiosInstance.get(`/admin/settings`));
+          setSettings(obj(data));
+        }
+        alert("✅ 설정이 저장되어 학생 페이지에 반영됩니다.");
+      } else {
+        alert(res.data?.error || "설정 저장 실패(알 수 없는 오류)");
+      }
+    } catch (err) {
+      console.error("설정 저장 오류:", err);
+      alert(
+        `설정 저장 실패: ${err.response?.status || ""} ${err.response?.data?.error || err.message}`
+      );
+    }
+  };
 
   // ✅ 랜덤 ID 생성
   const generateStudentId = () => {
@@ -236,7 +275,7 @@ export default function AdminDashboard() {
 
         const next = [...students, { id, name, grade, studentPhone, parentPhone }];
         setStudents(next);
-        localStorage.setItem("students", JSON.stringify(next));
+        try { localStorage.setItem("students", JSON.stringify(next)); } catch {}
 
         setNewStudent({
           id: "",
@@ -275,22 +314,23 @@ export default function AdminDashboard() {
     }
   };
 
-    const handleDeleteAll = async () => {
-      if (!window.confirm("⚠️ 정말 모든 학생 데이터를 삭제하시겠습니까?")) return;
+  const handleDeleteAll = async () => {
+    if (!window.confirm("⚠️ 정말 모든 학생 데이터를 삭제하시겠습니까?")) return;
 
-      try {
-        // 서버에 개별 삭제 요청 반복
-        for (const s of students) {
-          await axiosInstance.delete(`/admin/students/${s.id}`);
-        }
-        await fetchStudents(); // 최종 동기화
-        localStorage.removeItem("students");
-        alert("✅ 모든 학생 데이터가 삭제되었습니다.");
-      } catch (err) {
-        console.error("전체 삭제 오류:", err);
-        alert(err.response?.data?.error || "전체 삭제 실패");
+    try {
+      // 서버에 개별 삭제 요청 반복
+      for (const s of students) {
+        await axiosInstance.delete(`/admin/students/${s.id}`);
       }
-    };
+      await fetchStudents(); // 최종 동기화
+      try { localStorage.removeItem("students"); } catch {}
+      alert("✅ 모든 학생 데이터가 삭제되었습니다.");
+    } catch (err) {
+      console.error("전체 삭제 오류:", err);
+      alert(err.response?.data?.error || "전체 삭제 실패");
+    }
+  };
+
   // ✅ 학생 선택 시 일정 로드
   const handleStudentSelect = async (studentId) => {
     if (!studentId) {
@@ -298,10 +338,10 @@ export default function AdminDashboard() {
       return;
     }
     try {
-      const res = await axiosInstance.get(`/student/schedule/${studentId}`);
-      const data = res.data || [];
+      const data = await safeJSON(axiosInstance.get(`/student/schedule/${studentId}`));
+      const list = arr(data);
       const baseDate = getBaseDate();
-      const events = data.map((item) => {
+      const events = list.map((item) => {
         const offset = dayMap[item.day] ?? 0;
         const date = new Date(baseDate);
         date.setDate(baseDate.getDate() + offset);
@@ -324,12 +364,10 @@ export default function AdminDashboard() {
   // ✅ 학생 상세 모달 열기
   const openDetailModal = async (student) => {
     try {
-      const token = localStorage.getItem("adminToken");
-      const res = await axiosInstance.get("/api/admin/student-schedules", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      const allSchedules = res.data || [];
+      // ⛔ 기존: "/api/admin/student-schedules" → 잘못된 이중 /api
+      // ✅ 수정: axiosInstance 기준 상대경로 사용
+      const data = await safeJSON(axiosInstance.get("/admin/student-schedules"));
+      const allSchedules = arr(data);
       const studentSchedules = allSchedules.filter((s) => s.student_id === student.id);
 
       const updatedStudent = {
@@ -340,7 +378,7 @@ export default function AdminDashboard() {
       setSelectedStudent(updatedStudent);
       setShowDetailModal(true);
     } catch (err) {
-      console.error("❌ 일정 불러오기 실패:", err.message);
+      console.error("❌ 일정 불러오기 실패:", err?.message);
       alert("해당 학생의 일정을 불러오는 데 실패했습니다.");
     }
   };
@@ -393,50 +431,50 @@ export default function AdminDashboard() {
     }
   };
 
-    // ✅ 이름 정렬 상태 (Hook은 최상단에서만 선언!)
-    const [nameSort, setNameSort] = useState('asc');
+  // ✅ 이름 정렬 상태 (Hook은 최상단에서만 선언!)
+  const [nameSort, setNameSort] = useState('asc');
 
-    // ✅ 높이 자동 맞춤 (검색창 ↔ Delete All 버튼)
-    useEffect(() => {
-      const syncHeights = () => {
-        const input = document.querySelector('input[placeholder="학생 이름 검색"]');
-        const btn = Array.from(document.querySelectorAll("button")).find(
-          (b) => (b.textContent || "").trim() === "Delete All"
-        );
-        if (input && btn) {
-          const h = Math.max(input.offsetHeight, btn.offsetHeight);
-          input.style.height = `${h}px`;
-          btn.style.height = `${h}px`;
-        }
-      };
-      syncHeights();
-      window.addEventListener("resize", syncHeights);
-      return () => window.removeEventListener("resize", syncHeights);
-    }, []);
+  // ✅ 높이 자동 맞춤 (검색창 ↔ Delete All 버튼)
+  useEffect(() => {
+    const syncHeights = () => {
+      const input = document.querySelector('input[placeholder="학생 이름 검색"]');
+      const btn = Array.from(document.querySelectorAll("button")).find(
+        (b) => (b.textContent || "").trim() === "Delete All"
+      );
+      if (input && btn) {
+        const h = Math.max(input.offsetHeight, btn.offsetHeight);
+        input.style.height = `${h}px`;
+        btn.style.height = `${h}px`;
+      }
+    };
+    syncHeights();
+    window.addEventListener("resize", syncHeights);
+    return () => window.removeEventListener("resize", syncHeights);
+  }, []);
 
-    if (loading) return <div className="p-4 text-center text-lg">⏳ 데이터 로딩 중...</div>;
+  if (loading) return <div className="p-4 text-center text-lg">⏳ 데이터 로딩 중...</div>;
 
-    // ✅ 검색 + 정렬 적용된 학생 목록
-    const filteredStudents = students
-      .filter((s) => (s.name || "").toLowerCase().includes(searchText.toLowerCase()))
-      .sort((a, b) => {
-        if (nameSort === 'none') return 0;
-        const cmp = (a.name || "").localeCompare((b.name || ""), 'ko');
-        return nameSort === 'asc' ? cmp : -cmp;
-      });
+  // ✅ 검색 + 정렬 적용된 학생 목록
+  const filteredStudents = students
+    .filter((s) => (s.name || "").toLowerCase().includes(searchText.toLowerCase()))
+    .sort((a, b) => {
+      if (nameSort === 'none') return 0;
+      const cmp = (a.name || "").localeCompare((b.name || ""), 'ko');
+      return nameSort === 'asc' ? cmp : -cmp;
+    });
 
   const refreshSchedules = async () => {
     try {
       const token = localStorage.getItem("adminToken");
       if (!token) {
         alert("관리자 인증이 필요합니다.");
-        navigate("/admin-login");
+        navigate("/admin/login");
         return;
       }
 
-      const res = await axiosInstance.get("/admin/studentschedules");
-      const latestStudents = res.data.students || [];
-      const latestSchedules = res.data.schedules || [];
+      const data = await safeJSON(axiosInstance.get("/admin/studentschedules"));
+      const latestStudents = arr(data.students);
+      const latestSchedules = arr(data.schedules);
 
       // ✅ 이 두 줄이 가장 중요
       setStudents(latestStudents);
@@ -466,8 +504,8 @@ export default function AdminDashboard() {
       const code = err?.response?.status;
       if (code === 401 || code === 403) {
         alert("세션이 만료되었습니다. 다시 로그인하세요.");
-        localStorage.removeItem("adminToken");
-        navigate("/admin-login");
+        try { localStorage.removeItem("adminToken"); } catch {}
+        navigate("/admin/login");
       } else {
         alert("일정 최신화 실패");
       }
@@ -535,6 +573,7 @@ export default function AdminDashboard() {
 
     alert("✅ 모든 데이터가 파일로 저장되었습니다.");
   };
+
   // ⬇️⬇️ 파일 불러오기 (JSON/Excel 통합) ---------------------------------
   const handleFileImport = (e) => {
     const file = e.target.files?.[0];
@@ -563,8 +602,10 @@ export default function AdminDashboard() {
         if (data.calendarEvents) setCalendarEvents(data.calendarEvents);
         if (data.studentSchedules) setStudentSchedules(data.studentSchedules);
 
-        localStorage.setItem("students", JSON.stringify(data.students || []));
-        localStorage.setItem("studentSchedules", JSON.stringify(data.studentSchedules || []));
+        try {
+          localStorage.setItem("students", JSON.stringify(data.students || []));
+          localStorage.setItem("studentSchedules", JSON.stringify(data.studentSchedules || []));
+        } catch {}
         alert("✅ JSON 데이터가 성공적으로 복원되었습니다!");
       } catch (error) {
         alert("❌ JSON 파일을 불러오는 중 오류가 발생했습니다.");
@@ -669,9 +710,9 @@ export default function AdminDashboard() {
         // ⬇️ 학생별 상세 모달에서 쓰는 구조로도 채워 넣기
         const mapByStudent = new Map();
         for (const sch of nextSchedules) {
-          const arr = mapByStudent.get(sch.student_id) || [];
-          arr.push({ day: sch.day, start: sch.start, end: sch.end, type: sch.type });
-          mapByStudent.set(sch.student_id, arr);
+          const a = mapByStudent.get(sch.student_id) || [];
+          a.push({ day: sch.day, start: sch.start, end: sch.end, type: sch.type });
+          mapByStudent.set(sch.student_id, a);
         }
         const nextStudentSchedules = mergedStudentsArr.map((s) => ({
           id: s.id,
@@ -681,8 +722,10 @@ export default function AdminDashboard() {
         setStudentSchedules(nextStudentSchedules);
 
         // 저장
-        localStorage.setItem("students", JSON.stringify(mergedStudentsArr));
-        localStorage.setItem("studentSchedules", JSON.stringify(nextStudentSchedules));
+        try {
+          localStorage.setItem("students", JSON.stringify(mergedStudentsArr));
+          localStorage.setItem("studentSchedules", JSON.stringify(nextStudentSchedules));
+        } catch {}
 
         alert("✅ 엑셀 데이터가 성공적으로 반영되었습니다!");
 
@@ -764,8 +807,10 @@ export default function AdminDashboard() {
         if (data.studentSchedules) setStudentSchedules(data.studentSchedules);
 
         // ✅ LocalStorage에도 저장
-        localStorage.setItem("students", JSON.stringify(data.students || []));
-        localStorage.setItem("studentSchedules", JSON.stringify(data.studentSchedules || []));
+        try {
+          localStorage.setItem("students", JSON.stringify(data.students || []));
+          localStorage.setItem("studentSchedules", JSON.stringify(data.studentSchedules || []));
+        } catch {}
 
         alert("✅ 데이터가 성공적으로 복원되었습니다!");
       } catch (error) {
@@ -837,7 +882,6 @@ export default function AdminDashboard() {
     setCalendarEvents(events);
     setCalendarOpen(true); // ✅ 수정: 잘못된 setIsCalendarOpen → setCalendarOpen
   };
-
 
   return (
     <div className="p-4 max-w-6xl mx-auto">
@@ -1067,93 +1111,93 @@ export default function AdminDashboard() {
         />
       </div>
 
-        <div className="border p-4 mb-6 rounded">
-          <h2 className="text-lg font-semibold mb-2">페이지 설정</h2>
-          <div className="grid grid-cols-2 gap-4">
-            <input
-              type="text"
-              placeholder="이번 주 범위 (예: 7/19~7/24)"
-              value={settings.week_range_text}
-              onChange={(e) => handleChange("week_range_text", e.target.value)}
-              className="border p-2 rounded"
-            />
-            <input
-              type="text"
-              placeholder="외부 일정 설명"
-              value={settings.external_desc}
-              onChange={(e) => handleChange("external_desc", e.target.value)}
-              className="border p-2 rounded"
-            />
-            <input
-              type="text"
-              placeholder="외부 일정 예시"
-              value={settings.external_example}
-              onChange={(e) => handleChange("external_example", e.target.value)}
-              className="border p-2 rounded"
-            />
-            <input
-              type="text"
-              placeholder="센터 일정 설명"
-              value={settings.center_desc}
-              onChange={(e) => handleChange("center_desc", e.target.value)}
-              className="border p-2 rounded"
-            />
-            <input
-              type="text"
-              placeholder="센터 일정 예시"
-              value={settings.center_example}
-              onChange={(e) => handleChange("center_example", e.target.value)}
-              className="border p-2 rounded"
-            />
-            <textarea
-              placeholder="카카오 알림 푸터 메시지 입력"
-              value={settings.notification_footer}
-              onChange={(e) => handleChange("notification_footer", e.target.value)}
-              className="border p-2 rounded col-span-2"
-              rows={3}
-            />
-          </div>
-          <button
-            onClick={saveSettings}
-            className="bg-blue-500 text-white px-4 py-2 rounded mt-4"
-          >
-            설정 저장
-          </button>
-        </div>
-
-        {/* ✅ 학생 상세 모달 (조건부) */}
-        {isDetailModalOpen && selectedStudent && (
-          <StudentDetailModal
-            isOpen={isDetailModalOpen}
-            onClose={closeStudentDetail}
-            student={selectedStudent}
-            schedules={studentSchedules.find((s) => s.id === selectedStudent.id)}
-            settings={settings}
-            // ⬇️ 서버에 반영되도록 수정
-            onUpdateStudent={async (updated) => {
-              try {
-                await axiosInstance.put(`/admin/students/${updated.id}`, {
-                  name: updated.name ?? "",
-                  grade: updated.grade ?? "",
-                  studentPhone: updated.studentPhone ?? "",
-                  parentPhone: updated.parentPhone ?? "",
-                });
-
-                const updatedList = students.map((s) =>
-                  s.id === updated.id ? { ...s, ...updated }
-                : s
-                );
-                setStudents(updatedList);
-                localStorage.setItem("students", JSON.stringify(updatedList));
-                alert("✅ 서버에 학생 정보가 저장되었습니다.");
-              } catch (err) {
-                console.error("학생 정보 저장 오류:", err);
-                alert("❌ 학생 정보를 저장하지 못했습니다.");
-              }
-            }}
-            onSendSms={sendSmsNotification}
+      <div className="border p-4 mb-6 rounded">
+        <h2 className="text-lg font-semibold mb-2">페이지 설정</h2>
+        <div className="grid grid-cols-2 gap-4">
+          <input
+            type="text"
+            placeholder="이번 주 범위 (예: 7/19~7/24)"
+            value={settings.week_range_text}
+            onChange={(e) => handleChange("week_range_text", e.target.value)}
+            className="border p-2 rounded"
           />
-        )}        
+          <input
+            type="text"
+            placeholder="외부 일정 설명"
+            value={settings.external_desc}
+            onChange={(e) => handleChange("external_desc", e.target.value)}
+            className="border p-2 rounded"
+          />
+          <input
+            type="text"
+            placeholder="외부 일정 예시"
+            value={settings.external_example}
+            onChange={(e) => handleChange("external_example", e.target.value)}
+            className="border p-2 rounded"
+          />
+          <input
+            type="text"
+            placeholder="센터 일정 설명"
+            value={settings.center_desc}
+            onChange={(e) => handleChange("center_desc", e.target.value)}
+            className="border p-2 rounded"
+          />
+          <input
+            type="text"
+            placeholder="센터 일정 예시"
+            value={settings.center_example}
+            onChange={(e) => handleChange("center_example", e.target.value)}
+            className="border p-2 rounded"
+          />
+          <textarea
+            placeholder="카카오 알림 푸터 메시지 입력"
+            value={settings.notification_footer}
+            onChange={(e) => handleChange("notification_footer", e.target.value)}
+            className="border p-2 rounded col-span-2"
+            rows={3}
+          />
+        </div>
+        <button
+          onClick={saveSettings}
+          className="bg-blue-500 text-white px-4 py-2 rounded mt-4"
+        >
+          설정 저장
+        </button>
+      </div>
+
+      {/* ✅ 학생 상세 모달 (조건부) */}
+      {isDetailModalOpen && selectedStudent && (
+        <StudentDetailModal
+          isOpen={isDetailModalOpen}
+          onClose={closeStudentDetail}
+          student={selectedStudent}
+          schedules={studentSchedules.find((s) => s.id === selectedStudent.id)}
+          settings={settings}
+          // ⬇️ 서버에 반영되도록 수정
+          onUpdateStudent={async (updated) => {
+            try {
+              await axiosInstance.put(`/admin/students/${updated.id}`, {
+                name: updated.name ?? "",
+                grade: updated.grade ?? "",
+                studentPhone: updated.studentPhone ?? "",
+                parentPhone: updated.parentPhone ?? "",
+              });
+
+              const updatedList = students.map((s) =>
+                s.id === updated.id ? { ...s, ...updated }
+              : s
+              );
+              setStudents(updatedList);
+              try { localStorage.setItem("students", JSON.stringify(updatedList)); } catch {}
+              alert("✅ 서버에 학생 정보가 저장되었습니다.");
+            } catch (err) {
+              console.error("학생 정보 저장 오류:", err);
+              alert("❌ 학생 정보를 저장하지 못했습니다.");
+            }
+          }}
+          onSendSms={sendSmsNotification}
+        />
+      )}
     </div>
   );
 } // 컴포넌트 끝
