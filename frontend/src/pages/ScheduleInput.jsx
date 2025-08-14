@@ -9,6 +9,8 @@ import { useNavigate } from "react-router-dom";
  * - 요일 제목 옆에 해당 날짜(M/D) 표기 (weekStart=월 기준)
  * - 각 요일별 '미등원' 토글(입력 비활성화, 검증·저장 제외)
  * - 기존 기능 유지(최근 저장본/지난주 로딩/HH·MM 분리 텍스트 입력 등)
+ * - ✅ 센터 외 시간 활동(빈구간 라벨) 미입력 시 저장 차단 + 팝업 안내
+ * - ✅ 시각적 강조: 누락/오류 입력칸 빨간 테두리 표시(저장 시도 후)
  */
 export default function ScheduleInput() {
   const navigate = useNavigate();
@@ -115,6 +117,9 @@ export default function ScheduleInput() {
   const [autoSaveStatus, setAutoSaveStatus] = useState(""); // "", "saving", "saved", "error"
   const [lastAutoSaveAt, setLastAutoSaveAt] = useState(null); // Date | null
   const autoSaveTimer = useRef(null);
+
+  // ✅ 에러 표시 토글 (저장 시도 후에만 빨간 테두리 표시)
+  const [showErrors, setShowErrors] = useState(false); // ✅ 추가
 
   // 문자 발송 관련
   const [studentPhone, setStudentPhone] = useState("");
@@ -474,9 +479,65 @@ export default function ScheduleInput() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [student?.id, weekStart, isEmptyForm]);
 
+  // ✅ 센터 외 활동(빈구간 라벨) 누락 목록 수집 유틸 -------------- // ✅ 추가
+  const getUnlabeledGapsForDay = (dayIdx) => {
+    const gaps = computeGaps(schedule.센터[dayIdx]); // [{start, end}]
+    const labels = gapLabels[dayIdx] || [];
+    const missing = [];
+    gaps.forEach((g, i) => {
+      const label = (labels[i]?.label || "").trim();
+      if (!label) missing.push(`${g.start}~${g.end}`);
+    });
+    return missing;
+  };
+
+  // ✅ 입력칸 오류 하이라이트 계산(저장 시도 후만 표시) ----------- // ✅ 추가
+  const getCenterRowErrors = (dayIdx, rowIdx) => {
+    const row = schedule.센터[dayIdx][rowIdx];
+    const errs = { start: false, startMin: false, end: false, endMin: false };
+    if (!showErrors || absentDays[dayIdx]) return errs;
+
+    const any =
+      (row.start ?? "") !== "" ||
+      (row.startMin ?? "") !== "" ||
+      (row.end ?? "") !== "" ||
+      (row.endMin ?? "") !== "";
+
+    if (!any) return errs;
+
+    // 필수
+    if (!row.start) errs.start = true;
+    if (!row.startMin) errs.startMin = true;
+    if (!row.end) errs.end = true;
+    if (!row.endMin) errs.endMin = true;
+
+    // 범위/숫자
+    const sh = parseInt(row.start, 10);
+    const sm = parseInt(row.startMin, 10);
+    const eh = parseInt(row.end, 10);
+    const em = parseInt(row.endMin, 10);
+    if (row.start && (Number.isNaN(sh) || sh < H_START || sh > H_END)) errs.start = true;
+    if (row.startMin && (Number.isNaN(sm) || sm < 0 || sm > 59)) errs.startMin = true;
+    if (row.end && (Number.isNaN(eh) || eh < H_START || eh > H_END)) errs.end = true;
+    if (row.endMin && (Number.isNaN(em) || em < 0 || em > 59)) errs.endMin = true;
+
+    // 순서
+    if (!Number.isNaN(sh) && !Number.isNaN(sm) && !Number.isNaN(eh) && !Number.isNaN(em)) {
+      const s = sh * 60 + sm;
+      const e = eh * 60 + em;
+      if (!(s < e)) {
+        errs.start = true;
+        errs.startMin = true;
+        errs.end = true;
+        errs.endMin = true;
+      }
+    }
+    return errs;
+  };
+
   // ===== 저장 전 검증 =====
   const validateBeforeSave = () => {
-    // 각 요일별 검증(미등원 제외)
+    // 1) 센터(입력/범위/순서 등) 검증
     for (let d = 0; d < days.length; d++) {
       if (absentDays[d]) continue; // 미등원은 패스
       const rows = schedule.센터[d];
@@ -540,6 +601,29 @@ export default function ScheduleInput() {
         return false;
       }
     }
+
+    // 2) 🔥 "센터 외 시간 활동" 라벨이 전부 입력되었는지 검증 (미등원 제외)
+    const unlabeledReport = [];
+    for (let d = 0; d < days.length; d++) {
+      if (absentDays[d]) continue; // 미등원 요일은 제외
+      const missing = getUnlabeledGapsForDay(d); // ["08:00~09:30", ...]
+      if (missing.length > 0) {
+        unlabeledReport.push(`${days[d]}: ${missing.join(", ")}`);
+      }
+    }
+
+    if (unlabeledReport.length > 0) {
+      alert(
+        [
+          "센터 외 시간 활동(빈구간) 입력이 비어 있습니다.",
+          "아래 구간에 활동 내용을 입력해주세요:",
+          "",
+          ...unlabeledReport
+        ].join("\n")
+      );
+      return false;
+    }
+
     return true;
   };
 
@@ -611,6 +695,7 @@ export default function ScheduleInput() {
     }
 
     // 👇 새 검증 추가
+    setShowErrors(true); // ✅ 변경: 저장 시도 시 에러 하이라이트 ON
     if (!validateBeforeSave()) return;
 
     try {
@@ -677,6 +762,7 @@ export default function ScheduleInput() {
         setLoading(false);
         if (res.data?.success) {
           alert("저장 완료!");
+          setShowErrors(false); // ✅ 성공 시 에러 하이라이트 OFF
           setShowPrevWeekPrompt(false);
           setViewWeekStart(weekStart);
           await loadWeek({ targetWeekStart: weekStart });
@@ -692,6 +778,7 @@ export default function ScheduleInput() {
         setLoading(false);
         if (res2.data?.success) {
           alert("저장 완료!");
+          setShowErrors(false); // ✅ 성공 시 에러 하이라이트 OFF
           setShowPrevWeekPrompt(false);
           setViewWeekStart(weekStart);
           await loadWeek({ targetWeekStart: weekStart });
@@ -967,63 +1054,66 @@ export default function ScheduleInput() {
 
               {/* 센터 블록 표 (HH / MM 분리 입력) */}
               <div className={`space-y-2 ${disabled ? "opacity-60 pointer-events-none select-none" : ""}`}>
-                {rows.map((row, rowIdx) => (
-                  <div key={rowIdx} className="flex flex-wrap items-center gap-2">
-                    {/* 시작 HH */}
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      className="border rounded px-2 py-1 text-sm w-16"
-                      placeholder="11"
-                      maxLength={2}
-                      value={row.start}
-                      onChange={(e) => updateCell(dayIdx, rowIdx, "start", e.target.value)}
-                      disabled={disabled}
-                    />
-                    {/* 시작 MM */}
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      className="border rounded px-2 py-1 text-sm w-16"
-                      placeholder="00"
-                      maxLength={2}
-                      value={row.startMin}
-                      onChange={(e) => updateCell(dayIdx, rowIdx, "startMin", e.target.value)}
-                      disabled={disabled}
-                    />
-                    <span className="text-sm">~</span>
-                    {/* 종료 HH */}
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      className="border rounded px-2 py-1 text-sm w-16"
-                      placeholder="19"
-                      maxLength={2}
-                      value={row.end}
-                      onChange={(e) => updateCell(dayIdx, rowIdx, "end", e.target.value)}
-                      disabled={disabled}
-                    />
-                    {/* 종료 MM */}
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      className="border rounded px-2 py-1 text-sm w-16"
-                      placeholder="30"
-                      maxLength={2}
-                      value={row.endMin}
-                      onChange={(e) => updateCell(dayIdx, rowIdx, "endMin", e.target.value)}
-                      disabled={disabled}
-                    />
+                {rows.map((row, rowIdx) => {
+                  const errs = getCenterRowErrors(dayIdx, rowIdx); // ✅ 추가
+                  return (
+                    <div key={rowIdx} className="flex flex-wrap items-center gap-2">
+                      {/* 시작 HH */}
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        className={`border rounded px-2 py-1 text-sm w-16 ${errs.start ? "border-red-500 ring-1 ring-red-500" : ""}`} // ✅ 변경(하이라이트)
+                        placeholder="11"
+                        maxLength={2}
+                        value={row.start}
+                        onChange={(e) => updateCell(dayIdx, rowIdx, "start", e.target.value)}
+                        disabled={disabled}
+                      />
+                      {/* 시작 MM */}
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        className={`border rounded px-2 py-1 text-sm w-16 ${errs.startMin ? "border-red-500 ring-1 ring-red-500" : ""}`} // ✅ 변경
+                        placeholder="00"
+                        maxLength={2}
+                        value={row.startMin}
+                        onChange={(e) => updateCell(dayIdx, rowIdx, "startMin", e.target.value)}
+                        disabled={disabled}
+                      />
+                      <span className="text-sm">~</span>
+                      {/* 종료 HH */}
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        className={`border rounded px-2 py-1 text-sm w-16 ${errs.end ? "border-red-500 ring-1 ring-red-500" : ""}`} // ✅ 변경
+                        placeholder="19"
+                        maxLength={2}
+                        value={row.end}
+                        onChange={(e) => updateCell(dayIdx, rowIdx, "end", e.target.value)}
+                        disabled={disabled}
+                      />
+                      {/* 종료 MM */}
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        className={`border rounded px-2 py-1 text-sm w-16 ${errs.endMin ? "border-red-500 ring-1 ring-red-500" : ""}`} // ✅ 변경
+                        placeholder="30"
+                        maxLength={2}
+                        value={row.endMin}
+                        onChange={(e) => updateCell(dayIdx, rowIdx, "endMin", e.target.value)}
+                        disabled={disabled}
+                      />
 
-                    <button
-                      onClick={() => removeRow(dayIdx, rowIdx)}
-                      className="text-xs border px-2 py-1 rounded hover:bg-gray-50"
-                      disabled={disabled}
-                    >
-                      삭제
-                    </button>
-                  </div>
-                ))}
+                      <button
+                        onClick={() => removeRow(dayIdx, rowIdx)}
+                        className="text-xs border px-2 py-1 rounded hover:bg-gray-50"
+                        disabled={disabled}
+                      >
+                        삭제
+                      </button>
+                    </div>
+                  );
+                })}
                 <div>
                   <button
                     onClick={() => addRow(dayIdx)}
@@ -1041,20 +1131,23 @@ export default function ScheduleInput() {
                 {disabled ? (
                   <div className="text-xs text-gray-500">미등원 처리된 요일입니다.</div>
                 ) : gapLabels[dayIdx] && gapLabels[dayIdx].length > 0 ? (
-                  gapLabels[dayIdx].map((g, i) => (
-                    <div key={i} className="flex flex-wrap items-center gap-2 mb-1">
-                      <span className="text-xs text-gray-600 w-24">
-                        {g.start}~{g.end}
-                      </span>
-                      <input
-                        type="text"
-                        className="border rounded px-2 py-1 text-sm flex-1"
-                        placeholder="예: 학교 / PMG 과학 학원 / 휴식"
-                        value={g.label || ""}
-                        onChange={(e) => setGapLabel(dayIdx, i, e.target.value)}
-                      />
-                    </div>
-                  ))
+                  gapLabels[dayIdx].map((g, i) => {
+                    const needLabel = showErrors && ((g.label || "").trim() === ""); // ✅ 추가: 미입력 하이라이트
+                    return (
+                      <div key={i} className="flex flex-wrap items-center gap-2 mb-1">
+                        <span className="text-xs text-gray-600 w-24">
+                          {g.start}~{g.end}
+                        </span>
+                        <input
+                          type="text"
+                          className={`border rounded px-2 py-1 text-sm flex-1 ${needLabel ? "border-red-500 ring-1 ring-red-500" : ""}`} // ✅ 변경
+                          placeholder="예: 학교 / PMG 과학 학원 / 휴식"
+                          value={g.label || ""}
+                          onChange={(e) => setGapLabel(dayIdx, i, e.target.value)}
+                        />
+                      </div>
+                    );
+                  })
                 ) : (
                   <div className="text-xs text-gray-500">센터 시간을 입력하면 자동으로 생성됩니다.</div>
                 )}
