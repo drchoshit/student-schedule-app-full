@@ -11,6 +11,7 @@ import { useNavigate } from "react-router-dom";
  * - 기존 기능 유지(최근 저장본/지난주 로딩/HH·MM 분리 텍스트 입력 등)
  * - ✅ 센터 외 시간 활동(빈구간 라벨) 미입력 시 저장 차단 + 팝업 안내
  * - ✅ 시각적 강조: 누락/오류 입력칸 빨간 테두리 표시(저장 시도 후)
+ * - ✅ 관리자 설정의 시작 날짜(예: 8/18~8/24)를 학생 화면의 기준 주(월요일)로 연동
  */
 export default function ScheduleInput() {
   const navigate = useNavigate();
@@ -31,12 +32,33 @@ export default function ScheduleInput() {
     d.setHours(0, 0, 0, 0);
     return d;
   };
+
+  // ✅ 관리자 week_range_text("8/18~8/24")에서 시작일을 뽑아 월요일로 정렬
+  const parseAdminWeekStart = (rangeText) => {
+    if (!rangeText) return null;
+    const m = rangeText.match(/(\d{1,2})\s*\/\s*(\d{1,2})/); // 첫 날짜 MM/DD 추출
+    if (!m) return null;
+    const mm = Number(m[1]);
+    const dd = Number(m[2]);
+    const now = new Date();
+    let year = now.getFullYear();
+    const d = new Date(year, mm - 1, dd);
+    d.setHours(0, 0, 0, 0);
+    // 월요일로 스냅(관리자가 월요일이 아닌 날짜를 입력해도 월요일 사용)
+    const dow = d.getDay(); // 0=일..1=월..6=토
+    const diff = (dow === 0 ? -6 : 1 - dow);
+    d.setDate(d.getDate() + diff);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  };
+
+  // 초기값은 "오늘 기준 주"로, 이후 설정을 로드하면 관리자 값으로 갱신함
   const mondayThis = getWeekStartMonday();
   const mondayPrev = new Date(mondayThis.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-  const [weekStart] = useState(toYmd(mondayThis)); // 이번 주(저장 대상)
-  const [prevWeekStart] = useState(toYmd(mondayPrev)); // 지난 주
-  const [viewWeekStart, setViewWeekStart] = useState(weekStart); // 화면에 보여주는 주
+  const [weekStart, setWeekStart] = useState(toYmd(mondayThis)); // 이번 주(저장 대상)
+  const [prevWeekStart, setPrevWeekStart] = useState(toYmd(mondayPrev)); // 지난 주
+  const [viewWeekStart, setViewWeekStart] = useState(toYmd(mondayThis)); // 화면에 보여주는 주
   const isViewingPrev = viewWeekStart === prevWeekStart;
 
   // 요일별 실제 날짜 (weekStart=월요일 기준)
@@ -147,17 +169,27 @@ export default function ScheduleInput() {
     }
   }, [student, navigate]);
 
-  // 설정 로드
+  // 설정 로드 (✅ 설정의 시작 날짜를 주 기준으로 반영)
   useEffect(() => {
     const fetchSettings = async () => {
       try {
         const res = await axios.get(`/student/settings`);
-        setSettings({
+        const next = {
           week_range_text: res.data?.week_range_text ?? "",
           center_desc: res.data?.center_desc ?? "",
           center_example: res.data?.center_example ?? "",
           notification_footer: res.data?.notification_footer ?? "",
-        });
+        };
+        setSettings(next);
+
+        const startDate = parseAdminWeekStart(next.week_range_text);
+        if (startDate) {
+          const ws = toYmd(startDate);
+          const ps = toYmd(new Date(startDate.getTime() - 7 * 24 * 60 * 60 * 1000));
+          setWeekStart(ws);
+          setPrevWeekStart(ps);
+          setViewWeekStart(ws);
+        }
       } catch (e) {
         console.error("❌ 설정 불러오기 오류:", e);
       }
@@ -410,7 +442,7 @@ export default function ScheduleInput() {
     }
   };
 
-  // 첫 진입
+  // 첫 진입 (✅ weekStart/prevWeekStart가 설정값으로 바뀌면 재실행)
   useEffect(() => {
     const boot = async () => {
       if (!student?.id) return;
@@ -436,7 +468,7 @@ export default function ScheduleInput() {
     };
     boot();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [student?.id]);
+  }, [student?.id, weekStart, prevWeekStart]);
 
   // ✅ 폼이 비어 있으면 서버 임시본(draft) 복원 시도 (정식 저장이 없을 때 우선)
   const isEmptyForm = useMemo(() => {
@@ -733,12 +765,11 @@ export default function ScheduleInput() {
         });
       });
 
-      // ✅ 미등원 기록 추가(주차/학생별로 서버에 남겨서 새로고침·재로그인·다른 기기에서도 유지)
+      // ✅ 미등원 기록 추가
       absentDays.forEach((isAbsent, dayIndex) => {
         if (isAbsent) {
           allSchedules.push({
             day: days[dayIndex],
-            // 시작/끝은 의미 없어서 동일값으로 저장(백엔드가 필요 없으면 무시해도 됨)
             start: "08:00",
             end: "08:00",
             type: "미등원",
