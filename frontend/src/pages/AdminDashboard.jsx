@@ -585,20 +585,31 @@ export default function AdminDashboard() {
     return { id: selectedStudent.id, completed: list.length > 0, schedule: list };
   }, [schedules, selectedStudent]);
 
-  // ✅ 선택 학생의 캘린더 항목(센터/외부만)
+  // ✅ 선택 학생의 캘린더 항목(센터/외부만) — 외부 라벨 표시
   const selectedCalendarItems = useMemo(() => {
     if (!calendarStudent) return [];
     const latest = filterToLatestSchedules(schedules).filter(
       (x) => x.student_id === calendarStudent.id
     );
     return latest
-      .filter((x) => x.type === "센터" || x.type === "외부")
-      .map((x) => ({
-        day: x.day,
-        start: x.start,
-        end: x.end,
-        type: x.type === "센터" ? "센터" : "외부",
-      }));
+      .filter((x) => x.type === "센터" || x.type === "외부" || x.type === "빈구간")
+      .map((x) => {
+        const label = (x.description || "").trim();
+        // LiveWeekCalendar가 item.type을 카드 라벨로 쓰므로,
+        // 외부/빈구간이면 라벨을 우선 보여주고, 없으면 '외부'로 fallback
+        const displayType =
+          x.type === "센터" ? "센터" : (label || "외부");
+
+        return {
+          day: x.day,
+          start: x.start,
+          end: x.end,
+          type: displayType,     // ← 여기만 바꿔주면 카드에 '학교/학원/과외' 등 라벨이 찍힘
+          // (선택) 필요하면 원본도 같이 넘겨둘 수 있음:
+          // _rawType: x.type,
+          // _label: label,
+        };
+      });
   }, [calendarStudent, schedules]);
 
   // ✅ 캘린더 주 시작(월요일) 문자열
@@ -1347,31 +1358,6 @@ export default function AdminDashboard() {
         />
       </div>
 
-      {/* 🔼 요청대로: 선택 학생 캘린더를 "등록된 학생 표" 위로 이동 */}
-      {calendarStudent && (
-        <div className="border p-4 mb-6 rounded bg-white">
-          <div className="flex items-center justify-between mb-2">
-            <h2 className="text-lg font-semibold">
-              {calendarStudent.name} 님 주간 캘린더
-            </h2>
-            <button
-              className="text-sm border px-3 py-1 rounded hover:bg-gray-50"
-              onClick={() => setCalendarStudent(null)}
-            >
-              닫기
-            </button>
-          </div>
-          <LiveWeekCalendar
-            weekStartYmd={weekStartYmd}
-            items={selectedCalendarItems}
-            title={`${settings?.week_range_text || ""} (센터/외부)`}
-          />
-          <p className="text-xs text-gray-500 mt-2">
-            * “센터”와 “외부(빈구간 라벨 입력)”만 표시됩니다. “미등원”은 캘린더에 표시하지 않습니다.
-          </p>
-        </div>
-      )}
-
       <div className="border p-4 mb-6 rounded bg-gray-50">
         <h2 className="text-lg font-semibold mb-3">학생 등록</h2>
         <div className="grid grid-cols-6 gap-4 mb-3">
@@ -1471,55 +1457,86 @@ export default function AdminDashboard() {
         </thead>
         <tbody>
           {filteredStudents.map((s, idx) => (
-            <tr key={idx} className="text-center">
-              <td className="border px-2 py-1">{s.id}</td>
-              <td className="border px-2 py-1">{s.name}</td>
-              <td className="border px-2 py-1">{s.grade}</td>
-              <td className="border px-2 py-1">{s.studentPhone}</td>
-              <td className="border px-2 py-1">{s.parentPhone}</td>
-              <td className="border px-2 py-1">
-                <div className="flex items-center justify-center gap-2">
-                  <button onClick={() => openStudentDetail(s)} className="bg-blue-500 text-white px-2 py-1 rounded">
-                    상세
+            <React.Fragment key={s.id || idx}>
+              {/* ① 학생 정보 행 */}
+              <tr className="text-center">
+                <td className="border px-2 py-1">{s.id}</td>
+                <td className="border px-2 py-1">{s.name}</td>
+                <td className="border px-2 py-1">{s.grade}</td>
+                <td className="border px-2 py-1">{s.studentPhone}</td>
+                <td className="border px-2 py-1">{s.parentPhone}</td>
+                <td className="border px-2 py-1">
+                  <div className="flex items-center justify-center gap-2">
+                    <button onClick={() => openStudentDetail(s)} className="bg-blue-500 text-white px-2 py-1 rounded">
+                      상세
+                    </button>
+                    <button
+                      onClick={() => setCalendarStudent(prev => (prev?.id === s.id ? null : s))}
+                      className="bg-slate-600 text-white px-2 py-1 rounded hover:bg-slate-700"
+                      title="이 학생의 주간 캘린더 보기/닫기"
+                    >
+                      {calendarStudent?.id === s.id ? "캘린더 닫기" : "캘린더"}
+                    </button>
+                  </div>
+                </td>
+                <td className="border px-2 py-1">
+                  <button
+                    onClick={() => sendSmsNotification(s, "student")}
+                    className="bg-green-500 text-white px-2 py-1 rounded mr-1 hover:bg-green-600"
+                  >
+                    학  생
                   </button>
                   <button
-                    onClick={() => setCalendarStudent(s)}
-                    className="bg-slate-600 text-white px-2 py-1 rounded hover:bg-slate-700"
-                    title="이 학생의 주간 캘린더를 위에서 확인"
+                    onClick={() => sendSmsNotification(s, "parent")}
+                    className="bg-blue-500 text-white px-2 py-1 rounded mr-1 hover:bg-blue-600"
                   >
-                    캘린더
+                    보호자
                   </button>
-                </div>
-              </td>
-              <td className="border px-2 py-1">
-                <button
-                  onClick={() => sendSmsNotification(s, "student")}
-                  className="bg-green-500 text-white px-2 py-1 rounded mr-1 hover:bg-green-600"
-                >
-                  학  생
-                </button>
-                <button
-                  onClick={() => sendSmsNotification(s, "parent")}
-                  className="bg-blue-500 text-white px-2 py-1 rounded mr-1 hover:bg-blue-600"
-                >
-                  보호자
-                </button>
-                <button
-                  onClick={async () => {
-                    await sendSmsNotification(s, "student");
-                    await sendSmsNotification(s, "parent");
-                  }}
-                  className="bg-purple-500 text-white px-2 py-1 rounded hover:bg-purple-600"
-                >
-                  전  체
-                </button>
-              </td>
-              <td className="border px-2 py-1">
-                <button onClick={() => deleteStudent(s.id)} className="bg-red-500 text-white px-2 py-1 rounded">
-                  삭제
-                </button>
-              </td>
-            </tr>
+                  <button
+                    onClick={async () => {
+                      await sendSmsNotification(s, "student");
+                      await sendSmsNotification(s, "parent");
+                    }}
+                    className="bg-purple-500 text-white px-2 py-1 rounded hover:bg-purple-600"
+                  >
+                    전  체
+                  </button>
+                </td>
+                <td className="border px-2 py-1">
+                  <button onClick={() => deleteStudent(s.id)} className="bg-red-500 text-white px-2 py-1 rounded">
+                    삭제
+                  </button>
+                </td>
+              </tr>
+
+              {/* ② 선택된 학생이면 아래에 캘린더 확장 행 */}
+              {calendarStudent?.id === s.id && (
+                <tr>
+                  {/* 헤더 컬럼 수에 맞춰 조정: 기본 8 */}
+                  <td colSpan={8} className="border px-4 py-4 bg-white">
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="text-lg font-semibold">{s.name} 님 주간 캘린더</h3>
+                      <button
+                        className="text-sm border px-3 py-1 rounded hover:bg-gray-50"
+                        onClick={() => setCalendarStudent(null)}
+                      >
+                        닫기
+                      </button>
+                    </div>
+
+                    <LiveWeekCalendar
+                      weekStartYmd={weekStartYmd}
+                      items={selectedCalendarItems}
+                      title={`${settings?.week_range_text || ""} (센터/외부)`}
+                    />
+
+                    <p className="text-xs text-gray-500 mt-2">
+                      * “센터”와 “외부(빈구간 라벨 입력)”만 표시됩니다. “미등원”은 캘린더에 표시하지 않습니다.
+                    </p>
+                  </td>
+                </tr>
+              )}
+            </React.Fragment>
           ))}
         </tbody>
       </table>
