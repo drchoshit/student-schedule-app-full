@@ -137,6 +137,14 @@ const pickLatestItems = (items) => {
 
 const filterToLatestSchedules = (schedules) => pickLatestItems(arr(schedules));
 
+function toMillis(ts) {
+  if (!ts) return NaN;
+  if (typeof ts === "number") return ts;
+  const s = String(ts).replace(" ", "T"); // 'YYYY-MM-DD HH:mm:ss' -> 'YYYY-MM-DDTHH:mm:ss'
+  const ms = Date.parse(s);
+  return Number.isNaN(ms) ? NaN : ms;
+}
+
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const safeJSON = useSafeJSON(navigate);
@@ -674,6 +682,7 @@ export default function AdminDashboard() {
         navigate("/admin/login");
         return;
       }
+
       const data = await safeJSON(axiosInstance.get("/admin/studentschedules"));
       const latestStudents = arr(data.students);
       const latestSchedulesRaw = arr(data.schedules).map((x) => ({
@@ -682,9 +691,11 @@ export default function AdminDashboard() {
       }));
       const latestSchedules = filterToLatestSchedules(latestSchedulesRaw);
 
+      // 상태 반영
       setStudents(latestStudents);
       setSchedules(latestSchedules);
 
+      // 캘린더 이벤트 갱신
       const base = getBaseDate();
       setCalendarEvents(
         latestSchedules
@@ -713,7 +724,39 @@ export default function AdminDashboard() {
           })
       );
 
-      alert("✅ 일정이 최신화되었습니다!");
+      // ✅ 추가: 최근 72시간 제출 학생 집계
+      const cutoff = Date.now() - 72 * 60 * 60 * 1000; // 72시간
+      const submittedSet = new Map(); // id -> latest ms
+
+      for (const r of latestSchedulesRaw) {
+        const sid = String(r?.student_id ?? r?.studentId ?? r?.id ?? "");
+        if (!sid) continue;
+        const ms = toMillis(r?.saved_at || r?.updated_at || r?.created_at || r?.timestamp);
+        if (!Number.isFinite(ms) || ms < cutoff) continue;
+        const prev = submittedSet.get(sid);
+        if (!prev || ms > prev) submittedSet.set(sid, ms);
+      }
+
+      const submittedList = latestStudents
+        .filter((stu) => submittedSet.has(stu.id))
+        .map((stu) => ({
+          id: stu.id,
+          name: stu.name || stu.id,
+          at: submittedSet.get(stu.id),
+        }))
+        .sort((a, b) => b.at - a.at);
+
+      const submittedNames = submittedList.map((x) => x.name);
+      const submittedCount = submittedNames.length;
+
+      // 팝업 메시지
+      const msgLines = [];
+      msgLines.push("✅ 일정이 최신화되었습니다!");
+      msgLines.push(`\n🕒 최근 72시간 내 제출 학생: ${submittedCount}명`);
+      msgLines.push(submittedCount ? `- ${submittedNames.join(", ")}` : "- (없음)");
+
+      alert(msgLines.join("\n"));
+
     } catch (err) {
       console.error("❌ 일정 최신화 실패:", err);
       const code = err?.response?.status;
