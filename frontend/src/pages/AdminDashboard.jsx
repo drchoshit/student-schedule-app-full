@@ -178,7 +178,7 @@ export default function AdminDashboard() {
   const [detailLatest, setDetailLatest] = useState(null); // { id, completed, schedule: [...] }
   const [detailLoading, setDetailLoading] = useState(false);
 
-  // ✅ 표 아래에서 보여줄 “선택 학생 캘린더”
+  // ✅ 표 위에서 보여줄 “선택 학생 캘린더”
   const [calendarStudent, setCalendarStudent] = useState(null);
 
   // 유틸
@@ -241,7 +241,7 @@ export default function AdminDashboard() {
         const byStudent = new Map();
         for (const s of newSchedules) {
           const list = byStudent.get(s.student_id) || [];
-          list.push({ day: s.day, start: s.start, end: s.end, type: s.type });
+          list.push({ day: s.day, start: s.start, end: s.end, type: s.type, description: s.description || "" });
           byStudent.set(s.student_id, list);
         }
         const nextStudentSchedules = newStudents.map((stu) => ({
@@ -621,7 +621,9 @@ export default function AdminDashboard() {
     }
     let message = `[안내] ${student.name}님의 이번 주 일정\n`;
     target.schedule.forEach((item) => {
-      message += `${item.day}: ${item.start} ~ ${item.end} (${item.type})\n`;
+      const label = (item.description || "").trim();
+      const extra = label ? ` [${label}]` : "";
+      message += `${item.day}: ${item.start} ~ ${item.end} (${item.type})${extra}\n`;
     });
     if (settings.notification_footer) message += `\n${settings.notification_footer}`;
 
@@ -807,6 +809,7 @@ export default function AdminDashboard() {
     reader.readAsText(file);
   };
 
+  // 엑셀 업로드 → 서버 DB까지 완전 대체
   const handleLoadExcel = (file) => {
     const reader = new FileReader();
     reader.onload = (evt) => {
@@ -817,9 +820,13 @@ export default function AdminDashboard() {
         const schedulesExternal = [];
         const schedulesCenter = [];
 
+        // (선택) 기존 학생 키로 중복 병합 대비
         for (const s of students || []) {
           nextStudents.set(s.name || s.studentPhone || s.id, { ...s });
         }
+
+        // 업로드 엑셀에서 주차 텍스트를 한 번만 잡아두기
+        let detectedRangeText = "";
 
         wb.SheetNames.forEach((sheetName) => {
           const ws = wb.Sheets[sheetName];
@@ -830,6 +837,7 @@ export default function AdminDashboard() {
 
           const a1 = (json[0]?.[0] || "").toString();
           const rangeTxt = extractRangeTextFromTitle(a1);
+          if (rangeTxt && !detectedRangeText) detectedRangeText = rangeTxt;
           if (rangeTxt) setSettings((prev) => ({ ...prev, week_range_text: rangeTxt }));
 
           const header = json[1] || [];
@@ -895,7 +903,7 @@ export default function AdminDashboard() {
         const mapByStudent = new Map();
         for (const sch of nextSchedules) {
           const list = mapByStudent.get(sch.student_id) || [];
-          list.push({ day: sch.day, start: sch.start, end: sch.end, type: sch.type });
+          list.push({ day: sch.day, start: sch.start, end: sch.end, type: sch.type, description: sch.description || "" });
           mapByStudent.set(sch.student_id, list);
         }
         const nextStudentSchedules = mergedStudentsArr.map((s) => ({
@@ -909,6 +917,72 @@ export default function AdminDashboard() {
           localStorage.setItem("students", JSON.stringify(mergedStudentsArr));
           localStorage.setItem("studentSchedules", JSON.stringify(nextStudentSchedules));
         } catch {}
+
+        // ✅ 서버 DB까지 대체: 기존 학생 전체 삭제 → 새 학생 생성 → 학생별 스케줄 저장
+        (async () => {
+          try {
+            // 0) 주차(weekStart) 계산
+            const baseTxt = detectedRangeText || settings.week_range_text || "";
+            const weekStartStr = (() => {
+              const m = String(baseTxt).match(/(\d{1,2})\/(\d{1,2})/);
+              if (m) {
+                const year = new Date().getFullYear();
+                const d = new Date(year, Number(m[1]) - 1, Number(m[2]));
+                return toYmd(mondayify(d));
+              }
+              return toYmd(mondayify(new Date()));
+            })();
+
+            // 1) 서버의 기존 학생 전부 삭제
+            const current = await safeJSON(axiosInstance.get("/admin/students"));
+            for (const s of arr(current)) {
+              try {
+                await axiosInstance.delete(`/admin/students/${s.id}`);
+              } catch (e) {
+                console.warn("학생 삭제 실패(무시):", s.id, e?.response?.status);
+              }
+            }
+
+            // 2) 새 학생 전부 생성
+            for (const s of mergedStudentsArr) {
+              await axiosInstance.post(`/admin/students`, {
+                id: s.id,
+                name: s.name || "",
+                grade: s.grade || "현역",
+                studentPhone: s.studentPhone || "",
+                parentPhone: s.parentPhone || "",
+              });
+            }
+
+            // 3) 학생별 스케줄 저장 (학생 UI와 동일 엔드포인트 활용)
+            const byStu = new Map();
+            nextSchedules.forEach((it) => {
+              if (!byStu.has(it.student_id)) byStu.set(it.student_id, []);
+              byStu.get(it.student_id).push({
+                day: it.day,
+                start: it.start,
+                end: it.end,
+                type: it.type,
+                description: it.description || "",
+              });
+            });
+
+            for (const [sid, items] of byStu.entries()) {
+              await axiosInstance.post(`/student/schedules`, {
+                student_id: sid,
+                weekStart: weekStartStr,
+                schedules: items,
+              });
+            }
+
+            // 4) 서버 반영 내용으로 다시 로드
+            await refreshSchedules();
+            alert("✅ 엑셀 데이터가 서버에 저장되어 다음 새로고침 이후에도 유지됩니다!");
+          } catch (persistErr) {
+            console.error("❌ 서버 반영 중 오류:", persistErr);
+            alert("엑셀 반영 중 서버 저장에 실패했습니다. 다시 시도해주세요.");
+          }
+        })();
 
         alert("✅ 엑셀 데이터가 성공적으로 반영되었습니다!");
       } catch (err) {
@@ -1273,6 +1347,31 @@ export default function AdminDashboard() {
         />
       </div>
 
+      {/* 🔼 요청대로: 선택 학생 캘린더를 "등록된 학생 표" 위로 이동 */}
+      {calendarStudent && (
+        <div className="border p-4 mb-6 rounded bg-white">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-lg font-semibold">
+              {calendarStudent.name} 님 주간 캘린더
+            </h2>
+            <button
+              className="text-sm border px-3 py-1 rounded hover:bg-gray-50"
+              onClick={() => setCalendarStudent(null)}
+            >
+              닫기
+            </button>
+          </div>
+          <LiveWeekCalendar
+            weekStartYmd={weekStartYmd}
+            items={selectedCalendarItems}
+            title={`${settings?.week_range_text || ""} (센터/외부)`}
+          />
+          <p className="text-xs text-gray-500 mt-2">
+            * “센터”와 “외부(빈구간 라벨 입력)”만 표시됩니다. “미등원”은 캘린더에 표시하지 않습니다.
+          </p>
+        </div>
+      )}
+
       <div className="border p-4 mb-6 rounded bg-gray-50">
         <h2 className="text-lg font-semibold mb-3">학생 등록</h2>
         <div className="grid grid-cols-6 gap-4 mb-3">
@@ -1386,7 +1485,7 @@ export default function AdminDashboard() {
                   <button
                     onClick={() => setCalendarStudent(s)}
                     className="bg-slate-600 text-white px-2 py-1 rounded hover:bg-slate-700"
-                    title="이 학생의 주간 캘린더를 아래에서 확인"
+                    title="이 학생의 주간 캘린더를 위에서 확인"
                   >
                     캘린더
                   </button>
@@ -1424,30 +1523,6 @@ export default function AdminDashboard() {
           ))}
         </tbody>
       </table>
-
-      {calendarStudent && (
-        <div className="border p-4 mb-6 rounded bg-white">
-          <div className="flex items-center justify-between mb-2">
-            <h2 className="text-lg font-semibold">
-              {calendarStudent.name} 님 주간 캘린더
-            </h2>
-            <button
-              className="text-sm border px-3 py-1 rounded hover:bg-gray-50"
-              onClick={() => setCalendarStudent(null)}
-            >
-              닫기
-            </button>
-          </div>
-          <LiveWeekCalendar
-            weekStartYmd={weekStartYmd}
-            items={selectedCalendarItems}
-            title={`${settings?.week_range_text || ""} (센터/외부)`}
-          />
-          <p className="text-xs text-gray-500 mt-2">
-            * “센터”와 “외부(빈구간 라벨 입력)”만 표시됩니다. “미등원”은 캘린더에 표시하지 않습니다.
-          </p>
-        </div>
-      )}
 
       <div className="border p-4 mb-6 rounded">
         <h2 className="text-lg font-semibold mb-3">학생별 센터 재원 요약</h2>
