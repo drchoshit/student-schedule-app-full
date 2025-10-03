@@ -1457,9 +1457,7 @@ export default function AdminDashboard() {
           placeholder="학생 이름 검색"
           className="border border-gray-350 px-2 py-1 mb-2 rounded w-full"
         />
-        <button onClick={handleDeleteAll} className="bg-red-500 text-white px-10 py-1 rounded hover:bg-red-600">
-          Delete All
-        </button>
+        {/* Delete All 버튼 제거됨 */}
       </div>
 
       <div className="flex items-center gap-2 mb-2">
@@ -1484,7 +1482,10 @@ export default function AdminDashboard() {
         </button>
       </div>
 
-      <h2 className="text-xl font-semibold mb-2">등록된 학생</h2>
+      <h2 className="text-xl font-semibold mb-2">
+        등록된 학생 ({filteredStudents.length}명)
+      </h2>
+
       <table className="table-auto w-full border mb-6">
         <thead>
           <tr className="bg-gray-200 text-center">
@@ -1524,27 +1525,38 @@ export default function AdminDashboard() {
                 </td>
                 <td className="border px-2 py-1">
                   <button
-                    onClick={() => sendSmsNotification(s, "student")}
+                    onClick={() => {
+                      if (window.confirm("정말 문자를 보내시겠습니까?")) {
+                        sendSmsNotification(s, "student");
+                      }
+                    }}
                     className="bg-green-500 text-white px-2 py-1 rounded mr-1 hover:bg-green-600"
                   >
                     학  생
                   </button>
                   <button
-                    onClick={() => sendSmsNotification(s, "parent")}
+                    onClick={() => {
+                      if (window.confirm("정말 문자를 보내시겠습니까?")) {
+                        sendSmsNotification(s, "parent");
+                      }
+                    }}
                     className="bg-blue-500 text-white px-2 py-1 rounded mr-1 hover:bg-blue-600"
                   >
                     보호자
                   </button>
                   <button
-                    onClick={async () => {
-                      await sendSmsNotification(s, "student");
-                      await sendSmsNotification(s, "parent");
+                    onClick={() => {
+                      if (window.confirm("정말 문자를 보내시겠습니까?")) {
+                        sendSmsNotification(s, "student");
+                        sendSmsNotification(s, "parent");
+                      }
                     }}
                     className="bg-purple-500 text-white px-2 py-1 rounded hover:bg-purple-600"
                   >
                     전  체
                   </button>
                 </td>
+
                 <td className="border px-2 py-1">
                   <button onClick={() => deleteStudent(s.id)} className="bg-red-500 text-white px-2 py-1 rounded">
                     삭제
