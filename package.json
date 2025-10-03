@@ -9,7 +9,6 @@
     "dev": "concurrently \"npm run backend\" \"npm run frontend\"",
     "start": "cross-env NODE_ENV=production node backend/server.js",
     "build": "npm --prefix frontend run build",
-    "postinstall": "npm install --prefix frontend && npm run build"
   },
   "engines": {
     "node": ">=18.0.0"
