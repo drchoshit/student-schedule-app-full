@@ -222,8 +222,8 @@ const killProcessOnPort = (port) => {
     // (옵션) Health Check
     app.get("/healthz", (_req, res) => res.status(200).send("ok"));
 
-    // ✅ 정적 파일 서빙(frontend/dist)
-    const distPath = path.join(__dirname, "..", "frontend", "dist");
+    // ✅ 정적 파일 서빙(backend/dist)
+    const distPath = path.join(__dirname, "dist");
     app.use(express.static(distPath));
 
     // ✅ SPA 라우팅 폴백 (Express 5 안전: 미들웨어 버전만 사용)
