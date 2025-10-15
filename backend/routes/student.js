@@ -20,11 +20,12 @@ export default function studentRoutes(db) {
     const day = String(d.getDate()).padStart(2, "0");
     return `${y}-${m}-${day}`;
   };
+
   /** 유틸: 특정 날짜 기준 그 주의 월요일(주 시작) YYYY-MM-DD */
   const getWeekStartMondayStr = (base = new Date()) => {
     const d = new Date(base);
     const day = d.getDay(); // 0=Sun..6=Sat
-    const diff = (day === 0 ? -6 : 1 - day);
+    const diff = day === 0 ? -6 : 1 - day;
     d.setDate(d.getDate() + diff);
     d.setHours(0, 0, 0, 0);
     return toYmd(d);
@@ -99,10 +100,10 @@ export default function studentRoutes(db) {
       return res.status(400).json({ error: "유효하지 않은 요청입니다." });
     }
 
-    // 주차 결정
+    // ✅ weekStart 자동 설정 (없으면 이번 주 월요일)
     const week_start =
-      (typeof weekStart === "string" && weekStart.length >= 8)
-        ? weekStart.slice(0, 10) // YYYY-MM-DD 형태로 통일
+      typeof weekStart === "string" && weekStart.length >= 8
+        ? weekStart.slice(0, 10)
         : getWeekStartMondayStr(new Date());
 
     // 간단 검증
@@ -116,9 +117,7 @@ export default function studentRoutes(db) {
     try {
       await tx.exec("BEGIN");
 
-      // ✅ 기존: 전체 삭제(문제 원인)
-      // await tx.run("DELETE FROM schedules WHERE student_id = ?", [student_id]);
-      // ✅ 수정: 해당 주만 삭제
+      // ✅ 기존 주차만 삭제 (이전 주차 유지)
       await tx.run(
         "DELETE FROM schedules WHERE student_id = ? AND week_start = ?",
         [student_id, week_start]
@@ -135,14 +134,14 @@ export default function studentRoutes(db) {
       for (const s of schedules) {
         await stmt.run([
           String(student_id),
-          String(student_id),                        // student_code = student_id
-          String(s.day).trim(),                      // 요일
-          String(s.start).trim(),                    // HH:MM
-          String(s.end).trim(),                      // HH:MM
+          String(student_id),
+          String(s.day).trim(),
+          String(s.start).trim(),
+          String(s.end).trim(),
           (s.type ?? "").toString().trim(),
           (s.description ?? "").toString().trim(),
-          week_start,                                // ✅ 주차
-          saved_at,                                  // ✅ 저장시각
+          week_start,
+          saved_at,
         ]);
       }
 
@@ -167,13 +166,14 @@ export default function studentRoutes(db) {
 
       return res.json({ success: true, message: "✅ 스케줄 저장 완료" });
     } catch (error) {
-      try { await tx.exec("ROLLBACK"); } catch (_e) {}
+      try {
+        await tx.exec("ROLLBACK");
+      } catch (_e) {}
       console.error("❌ 스케줄 저장 오류:", error);
       return res.status(500).json({ error: `서버 오류: 스케줄 저장 실패 (${error.message})` });
     }
   }
 
-  // 단수형(기존) + 복수형(프론트 호환) 모두 제공
   router.post("/schedule", saveSchedules);
   router.post("/schedules", saveSchedules);
 
@@ -181,50 +181,28 @@ export default function studentRoutes(db) {
    * 조회:
    * - /schedule/:id 또는 /schedules/:id
    * - 쿼리 weekStart=YYYY-MM-DD 가 있으면 해당 주만 반환
-   * - 없으면 해당 학생의 **가장 최근 주차**를 반환
+   * - 없으면 이번 주 월요일(현재 주차)을 자동 반환
    */
   async function fetchSchedules(req, res) {
     try {
       const studentId = req.params.id;
-      const weekStart = (req.query.weekStart || "").toString().slice(0, 10);
+      const weekStartParam = (req.query.weekStart || "").toString().slice(0, 10);
 
-      if (weekStart) {
-        const rows = await db.all(
-          `SELECT id, student_id, day, start, end, type, description, week_start, saved_at
-             FROM schedules
-            WHERE student_id = ? AND week_start = ?
-            ORDER BY day, start`,
-          [studentId, weekStart]
-        );
-        return res.json(rows || []);
-      }
-
-      // weekStart 미지정 → 가장 최신 주차 구해오기
-      const latest = await db.get(
-        `SELECT week_start
-           FROM schedules
-          WHERE student_id = ?
-          GROUP BY week_start
-          ORDER BY MAX(saved_at) DESC
-          LIMIT 1`,
-        [studentId]
-      );
-
-      if (!latest?.week_start) return res.json([]);
+      // ✅ weekStart가 없으면 이번 주 월요일로 자동 계산
+      const targetWeek = weekStartParam || getWeekStartMondayStr(new Date());
 
       const rows = await db.all(
         `SELECT id, student_id, day, start, end, type, description, week_start, saved_at
-           FROM schedules
-          WHERE student_id = ? AND week_start = ?
-          ORDER BY day, start`,
-        [studentId, latest.week_start]
+         FROM schedules
+         WHERE student_id = ? AND week_start = ?
+         ORDER BY day, start`,
+        [studentId, targetWeek]
       );
+
       return res.json(rows || []);
     } catch (error) {
       console.error("❌ 스케줄 조회 오류:", error);
-      return res
-        .status(500)
-        .json({ error: `서버 오류: 스케줄 조회 실패 (${error.message})` });
+      return res.status(500).json({ error: `서버 오류: 스케줄 조회 실패 (${error.message})` });
     }
   }
 
@@ -234,7 +212,6 @@ export default function studentRoutes(db) {
   /**
    * 최근 저장본 주차 3개 (버튼 목록용)
    * GET /saves/:studentId?limit=3
-   * 응답: [{ week_start:"YYYY-MM-DD", saved_at:"ISO" }, ...]
    */
   router.get("/saves/:id", async (req, res) => {
     try {
@@ -242,11 +219,11 @@ export default function studentRoutes(db) {
       const limit = Math.max(1, Math.min(10, parseInt(req.query.limit || "3", 10)));
       const rows = await db.all(
         `SELECT week_start, MAX(saved_at) AS saved_at
-           FROM schedules
-          WHERE student_id = ?
-          GROUP BY week_start
-          ORDER BY MAX(saved_at) DESC
-          LIMIT ?`,
+         FROM schedules
+         WHERE student_id = ?
+         GROUP BY week_start
+         ORDER BY MAX(saved_at) DESC
+         LIMIT ?`,
         [studentId, limit]
       );
       res.json(rows || []);

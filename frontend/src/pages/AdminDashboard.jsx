@@ -220,96 +220,153 @@ export default function AdminDashboard() {
     }
   }, [navigate]);
 
-  // 최초 로딩
-  useEffect(() => {
-    const token = localStorage.getItem("adminToken");
-    if (!token) return;
+    // ✅ 설정의 주차 텍스트("11/3~11/9")에서 시작일(월요일 기준) 추출 → YYYY-MM-DD 반환
+    function weekStartFromRangeText(rangeText) {
+      const m = String(rangeText || "").match(/(\d{1,2})\/(\d{1,2})/); // "11/3~11/9" → 11, 3
+      const mondayify = (d) => {
+        const nd = new Date(d);
+        const dow = nd.getDay();
+        const diff = dow === 0 ? -6 : 1 - dow;
+        nd.setDate(nd.getDate() + diff);
+        nd.setHours(0, 0, 0, 0);
+        return nd;
+      };
+      const toYmd = (d) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+          d.getDate()
+        ).padStart(2, "0")}`;
 
-    const load = async () => {
-      try {
-        const [settingsData, studentsData, schedulesData] = await Promise.all([
-          safeJSON(axiosInstance.get(`/admin/settings`, { params: { _t: Date.now() } })),
-          safeJSON(axiosInstance.get(`/admin/students`, { params: { _t: Date.now() } })),
-          safeJSON(axiosInstance.get(`/admin/schedules`, { params: { _t: Date.now() } })),
-        ]);
+      if (!m) {
+        // 설정이 비어있으면 오늘 기준 월요일로 fallback
+        return toYmd(mondayify(new Date()));
+      }
 
-        const newSettings = obj(settingsData);
-        const newStudents = arr(studentsData);
-        const newSchedulesRaw = arr(schedulesData).map((x) => ({
-          ...x,
-          type: normalizeType(x?.type),
-        }));
-        const newSchedules = filterToLatestSchedules(newSchedulesRaw);
+      const year = new Date().getFullYear();
+      const start = new Date(year, Number(m[1]) - 1, Number(m[2]));
+      return toYmd(mondayify(start));
+    }
 
-        setSettings(newSettings);
-        setStudents(newStudents);
-        setSchedules(newSchedules);
+    // ✅ 최초 로딩: 관리자 설정의 "주차 텍스트"에서 주차 시작일 계산 → 해당 주차로 데이터 로드
+    useEffect(() => {
+      const token = localStorage.getItem("adminToken");
+      if (!token) {
+        navigate("/admin/login");
+        return;
+      }
 
-        // 학생별 요약(최신만)
-        const byStudent = new Map();
-        for (const s of newSchedules) {
-          const list = byStudent.get(s.student_id) || [];
-          list.push({ day: s.day, start: s.start, end: s.end, type: s.type, description: s.description || "" });
-          byStudent.set(s.student_id, list);
-        }
-        const nextStudentSchedules = newStudents.map((stu) => ({
-          id: stu.id,
-          completed: (byStudent.get(stu.id)?.length || 0) > 0,
-          schedule: byStudent.get(stu.id) || [],
-        }));
-        setStudentSchedules(nextStudentSchedules);
+      const load = async () => {
         try {
-          localStorage.setItem("studentSchedules", JSON.stringify(nextStudentSchedules));
-        } catch {}
+          // 1️⃣ 설정을 먼저 불러와서 기준 주차 문자열을 계산
+          const settingsData = obj(
+            await safeJSON(axiosInstance.get(`/admin/settings`, { params: { _t: Date.now() } }))
+          );
+          const weekStart = weekStartFromRangeText(settingsData?.week_range_text);
 
-        // 캘린더 이벤트(학생 모드: 센터 + 외부 + 빈구간 라벨)
-        const base = getBaseDate();
-        setCalendarEvents(
-          newSchedules
-            .filter((it) => newStudents.some((s) => s.id === it.student_id))
-            .map((it) => {
-              const offset = dayMap[it.day] ?? 0;
-              const d = new Date(base);
-              d.setDate(base.getDate() + offset);
-              const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-                d.getDate()
-              ).padStart(2, "0")}`;
-              const nm =
-                newStudents.find((s) => s.id === it.student_id)?.name || it.student_id;
+          console.log("📅 관리자 설정 주차 기반 weekStart =", weekStart);
 
-              const isExternalLike = it.type === "외부" || it.type === "빈구간";
-              const label = (it.description || "").trim();
-              const title = isExternalLike && label
+          // 2️⃣ 해당 주차로 학생 + 일정 데이터 요청
+          const [studentsData, schedulesData] = await Promise.all([
+            safeJSON(axiosInstance.get(`/admin/students`, { params: { _t: Date.now() } })),
+            safeJSON(
+              axiosInstance.get(`/admin/schedules`, {
+                params: { weekStart, _t: Date.now() },
+              })
+            ),
+          ]);
+
+          // 3️⃣ 데이터 정규화
+          const newSettings = obj(settingsData);
+          const newStudents = arr(studentsData);
+          const newSchedulesRaw = arr(schedulesData).map((x) => ({
+            ...x,
+            type: normalizeType(x?.type),
+          }));
+          const newSchedules = filterToLatestSchedules(newSchedulesRaw);
+
+          setSettings(newSettings);
+          setStudents(newStudents);
+          setSchedules(newSchedules);
+
+          // 4️⃣ 학생별 요약 및 로컬스토리지 반영
+          const byStudent = new Map();
+          for (const s of newSchedules) {
+            const list = byStudent.get(s.student_id) || [];
+            list.push({
+              day: s.day,
+              start: s.start,
+              end: s.end,
+              type: s.type,
+              description: s.description || "",
+            });
+            byStudent.set(s.student_id, list);
+          }
+          const nextStudentSchedules = newStudents.map((stu) => ({
+            id: stu.id,
+            completed: (byStudent.get(stu.id)?.length || 0) > 0,
+            schedule: byStudent.get(stu.id) || [],
+          }));
+          setStudentSchedules(nextStudentSchedules);
+
+          try {
+            localStorage.setItem("studentSchedules", JSON.stringify(nextStudentSchedules));
+            localStorage.setItem("currentWeekStart", weekStart);
+          } catch {}
+
+          // 5️⃣ 캘린더 이벤트 생성
+          const base = getBaseDate();
+          const uniqueEvents = [];
+          const seenKeys = new Set();
+
+          for (const it of newSchedules) {
+            if (!newStudents.some((s) => s.id === it.student_id)) continue;
+
+            const offset = dayMap[it.day] ?? 0;
+            const d = new Date(base);
+            d.setDate(base.getDate() + offset);
+            const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+              d.getDate()
+            ).padStart(2, "0")}`;
+
+            const nm = newStudents.find((s) => s.id === it.student_id)?.name || it.student_id;
+            const isExternalLike = it.type === "외부" || it.type === "빈구간";
+            const label = (it.description || "").trim();
+            const title =
+              isExternalLike && label
                 ? `${nm} ${it.start}~${it.end} (${it.type}) [${label}]`
                 : `${nm} ${it.start}~${it.end} (${it.type || ""})`;
 
-              return {
-                title,
-                start: `${ymd}T${it.start}`,
-                end: `${ymd}T${it.end}`,
-              };
-            })
-        );
-      } catch (err) {
-        console.error("❌ 데이터 로드 실패:", err);
-        const code = err?.response?.status;
-        if (code === 401 || code === 403) {
-          alert("인증이 만료되었습니다. 다시 로그인하세요.");
-          try {
-            localStorage.removeItem("adminToken");
-          } catch {}
-          navigate("/admin/login");
-        } else {
-          alert("데이터 로드 중 오류가 발생했습니다.");
-        }
-      } finally {
-        setLoading(false);
-      }
-    };
+            const key = [it.student_id, it.day, it.start, it.end, it.type].join("|");
+            if (seenKeys.has(key)) continue;
+            seenKeys.add(key);
 
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [navigate]);
+            uniqueEvents.push({
+              title,
+              start: `${ymd}T${it.start}`,
+              end: `${ymd}T${it.end}`,
+            });
+          }
+
+          setCalendarEvents(uniqueEvents);
+        } catch (err) {
+          console.error("❌ 데이터 로드 실패:", err);
+          const code = err?.response?.status;
+          if (code === 401 || code === 403) {
+            alert("인증이 만료되었습니다. 다시 로그인하세요.");
+            try {
+              localStorage.removeItem("adminToken");
+            } catch {}
+            navigate("/admin/login");
+          } else {
+            alert("데이터 로드 중 오류가 발생했습니다.");
+          }
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      load();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [navigate]);
 
   // 학생 목록 재조회
   const fetchStudents = async () => {
@@ -662,6 +719,32 @@ export default function AdminDashboard() {
     }
   };
 
+    // ✅ 학생 정보 엑셀 다운로드 함수
+  const handleDownloadStudents = () => {
+    if (!students || students.length === 0) {
+      alert("다운로드할 학생 정보가 없습니다.");
+      return;
+    }
+
+    // 필요한 필드만 추출
+    const exportData = students.map((stu) => ({
+      ID: stu.id,
+      이름: stu.name,
+      학년: stu.grade,
+      학생전화: stu.studentPhone,
+      보호자전화: stu.parentPhone,
+    }));
+
+    // 엑셀 시트/파일 생성
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "학생정보");
+
+    // 파일 이름에 날짜 포함
+    const dateStr = new Date().toISOString().slice(0, 10); // 예: 2025-10-14
+    XLSX.writeFile(workbook, `학생정보_${dateStr}.xlsx`);
+  };
+  
   // 검색/정렬 적용된 목록
   if (loading) return <div className="p-4 text-center text-lg">⏳ 데이터 로딩 중...</div>;
 
@@ -673,104 +756,89 @@ export default function AdminDashboard() {
       return nameSort === "asc" ? cmp : -cmp;
     });
 
-  // 최신화
-  const refreshSchedules = async () => {
-    try {
-      const token = localStorage.getItem("adminToken");
-      if (!token) {
-        alert("관리자 인증이 필요합니다.");
-        navigate("/admin/login");
-        return;
+    // ✅ 최신화 (useEffect 로직과 동일한 방식 — 새로고침과 완전 일치)
+    const refreshSchedules = async () => {
+      try {
+        const token = localStorage.getItem("adminToken");
+        if (!token) {
+          alert("관리자 인증이 필요합니다. 다시 로그인하세요.");
+          navigate("/admin/login");
+          return;
+        }
+
+        // 1️⃣ 관리자 설정에서 주차 텍스트 불러오기 → weekStart 계산
+        const settingsData = obj(
+          await safeJSON(axiosInstance.get(`/admin/settings`, { params: { _t: Date.now() } }))
+        );
+        const weekStart = weekStartFromRangeText(settingsData?.week_range_text);
+        console.log("🔁 최신화 버튼 기준 주차 =", weekStart);
+
+        // 2️⃣ 주차 기준으로 학생 + 일정 데이터를 다시 요청
+        const [studentsData, schedulesData] = await Promise.all([
+          safeJSON(axiosInstance.get(`/admin/students`, { params: { _t: Date.now() } })),
+          safeJSON(
+            axiosInstance.get(`/admin/schedules`, {
+              params: { weekStart, _t: Date.now() },
+            })
+          ),
+        ]);
+
+        // 3️⃣ 정규화 및 상태 반영
+        const newStudents = arr(studentsData);
+        const newSchedulesRaw = arr(schedulesData).map((x) => ({
+          ...x,
+          type: normalizeType(x?.type),
+        }));
+        const newSchedules = filterToLatestSchedules(newSchedulesRaw);
+
+        setStudents(newStudents);
+        setSchedules(newSchedules);
+        setSettings(settingsData);
+
+        // 4️⃣ 최근 72시간 내 제출 학생 요약
+        const cutoff = Date.now() - 72 * 60 * 60 * 1000; // 72시간
+        const submittedSet = new Map(); // id -> latest timestamp
+        for (const r of newSchedulesRaw) {
+          const sid = String(r?.student_id ?? "");
+          const ms = toMillis(r?.saved_at || r?.updated_at || r?.created_at);
+          if (!Number.isFinite(ms) || ms < cutoff) continue;
+          const prev = submittedSet.get(sid);
+          if (!prev || ms > prev) submittedSet.set(sid, ms);
+        }
+
+        const submittedList = newStudents
+          .filter((stu) => submittedSet.has(stu.id))
+          .map((stu) => ({
+            id: stu.id,
+            name: stu.name || stu.id,
+            at: submittedSet.get(stu.id),
+          }))
+          .sort((a, b) => b.at - a.at);
+
+        const submittedNames = submittedList.map((x) => x.name);
+        const submittedCount = submittedNames.length;
+
+        // 5️⃣ 결과 메시지 출력
+        const msgLines = [];
+        msgLines.push("✅ 일정이 최신화되었습니다!");
+        msgLines.push(`📆 기준 주차: ${weekStart}`);
+        msgLines.push(`⏱️ 최근 72시간 내 제출 학생: ${submittedCount}명`);
+        msgLines.push(submittedCount ? `- ${submittedNames.join(", ")}` : "- (없음)");
+        alert(msgLines.join("\n"));
+      } catch (err) {
+        console.error("❌ 최신화 실패:", err);
+        const code = err?.response?.status;
+        if (code === 401 || code === 403) {
+          alert("세션이 만료되었습니다. 다시 로그인하세요.");
+          try {
+            localStorage.removeItem("adminToken");
+          } catch {}
+          navigate("/admin/login");
+        } else {
+          alert("❌ 일정 최신화 중 오류가 발생했습니다. 콘솔을 확인하세요.");
+        }
       }
-
-      const data = await safeJSON(axiosInstance.get("/admin/studentschedules"));
-      const latestStudents = arr(data.students);
-      const latestSchedulesRaw = arr(data.schedules).map((x) => ({
-        ...x,
-        type: normalizeType(x?.type),
-      }));
-      const latestSchedules = filterToLatestSchedules(latestSchedulesRaw);
-
-      // 상태 반영
-      setStudents(latestStudents);
-      setSchedules(latestSchedules);
-
-      // 캘린더 이벤트 갱신
-      const base = getBaseDate();
-      setCalendarEvents(
-        latestSchedules
-          .filter((it) => latestStudents.some((s) => s.id === it.student_id))
-          .map((it) => {
-            const offset = dayMap[it.day] ?? 0;
-            const d = new Date(base);
-            d.setDate(base.getDate() + offset);
-            const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-              d.getDate()
-            ).padStart(2, "0")}`;
-            const nm =
-              latestStudents.find((s) => s.id === it.student_id)?.name || it.student_id;
-
-            const isExternalLike = it.type === "외부" || it.type === "빈구간";
-            const label = (it.description || "").trim();
-            const title = isExternalLike && label
-              ? `${nm} ${it.start}~${it.end} (${it.type}) [${label}]`
-              : `${nm} ${it.start}~${it.end} (${it.type || ""})`;
-
-            return {
-              title,
-              start: `${ymd}T${it.start}`,
-              end: `${ymd}T${it.end}`,
-            };
-          })
-      );
-
-      // ✅ 추가: 최근 72시간 제출 학생 집계
-      const cutoff = Date.now() - 72 * 60 * 60 * 1000; // 72시간
-      const submittedSet = new Map(); // id -> latest ms
-
-      for (const r of latestSchedulesRaw) {
-        const sid = String(r?.student_id ?? r?.studentId ?? r?.id ?? "");
-        if (!sid) continue;
-        const ms = toMillis(r?.saved_at || r?.updated_at || r?.created_at || r?.timestamp);
-        if (!Number.isFinite(ms) || ms < cutoff) continue;
-        const prev = submittedSet.get(sid);
-        if (!prev || ms > prev) submittedSet.set(sid, ms);
-      }
-
-      const submittedList = latestStudents
-        .filter((stu) => submittedSet.has(stu.id))
-        .map((stu) => ({
-          id: stu.id,
-          name: stu.name || stu.id,
-          at: submittedSet.get(stu.id),
-        }))
-        .sort((a, b) => b.at - a.at);
-
-      const submittedNames = submittedList.map((x) => x.name);
-      const submittedCount = submittedNames.length;
-
-      // 팝업 메시지
-      const msgLines = [];
-      msgLines.push("✅ 일정이 최신화되었습니다!");
-      msgLines.push(`\n🕒 최근 72시간 내 제출 학생: ${submittedCount}명`);
-      msgLines.push(submittedCount ? `- ${submittedNames.join(", ")}` : "- (없음)");
-
-      alert(msgLines.join("\n"));
-
-    } catch (err) {
-      console.error("❌ 일정 최신화 실패:", err);
-      const code = err?.response?.status;
-      if (code === 401 || code === 403) {
-        alert("세션이 만료되었습니다. 다시 로그인하세요.");
-        try {
-          localStorage.removeItem("adminToken");
-        } catch {}
-        navigate("/admin/login");
-      } else {
-        alert("일정 최신화 실패");
-      }
-    }
-  };
+    };
 
   // 파일 내보내기/가져오기
   const buildFilenamePrefix = (base) => {
@@ -1482,9 +1550,50 @@ export default function AdminDashboard() {
         </button>
       </div>
 
-      <h2 className="text-xl font-semibold mb-2">
-        등록된 학생 ({filteredStudents.length}명)
-      </h2>
+      <div className="flex justify-between items-center mb-2">
+        <h2 className="text-xl font-semibold">
+          등록된 학생 ({filteredStudents.length}명)
+        </h2>
+
+        <div className="flex gap-2">
+          {/* 학생정보 엑셀 다운로드 버튼 */}
+          <button
+            onClick={handleDownloadStudents}
+            className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+          >
+            📥 학생정보 엑셀 다운로드
+          </button>
+
+                    {/* ⚠️ 전체 일정 삭제 버튼 (2단계 확인 포함) */}
+                    <button
+                      onClick={async () => {
+                        if (!window.confirm("⚠️ 정말 모든 학생의 일정을 삭제하시겠습니까?")) return;
+                        if (!window.confirm("정말로 진행하시겠습니까? 삭제 후 되돌릴 수 없습니다.")) return;
+                        try {
+                          setLoading(true);
+                          // 서버 측 일정 전체 삭제 요청
+                          await axiosInstance.delete("/admin/schedules/clearAll");
+                          // 클라이언트 측 일정 및 로컬스토리지 초기화
+                          setSchedules([]);
+                          setStudentSchedules([]);
+                          localStorage.removeItem("studentSchedules");
+                          localStorage.removeItem("calendarEvents");
+                          alert("✅ 모든 일정이 성공적으로 삭제되었습니다!");
+                        } catch (err) {
+                          console.error("❌ 전체 일정 삭제 실패:", err);
+                          alert("전체 일정 삭제 중 오류가 발생했습니다.");
+                        } finally {
+                          setLoading(false);
+                        }
+                      }}
+                      disabled={loading}
+                      className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 disabled:opacity-50"
+                    >
+                      {loading ? "삭제 중..." : "⚠️ 전체 일정 삭제"}
+                    </button>
+        </div>
+      </div>
+
       <table className="table-auto w-full border mb-6">
         <thead>
           <tr className="bg-gray-200 text-center">

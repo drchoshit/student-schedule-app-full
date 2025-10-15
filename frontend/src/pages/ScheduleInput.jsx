@@ -791,11 +791,19 @@ export default function ScheduleInput() {
       setLoading(true);
       // 새 API(weekStart 포함) 우선
       try {
+        // 🔥 저장 직전, 관리자 설정 주차 기준으로 강제 보정
+        let fixedWeekStart = weekStart;
+        if (settings.week_range_text) {
+          const adminStartDate = parseAdminWeekStart(settings.week_range_text);
+          if (adminStartDate) fixedWeekStart = toYmd(adminStartDate);
+        }
+
         const res = await axios.post(`/student/schedules`, {
           student_id: student.id,
-          weekStart, // ← 항상 이번 주로 저장
+          weekStart: fixedWeekStart,   // ✅ 관리자 기준 주차로 저장
           schedules: allSchedules,
         });
+
         setLoading(false);
         if (res.data?.success) {
           alert("저장 완료!");

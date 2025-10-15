@@ -23,23 +23,118 @@ export default function adminRoutes(db) {
   };
 
   // =========================
+  // 🧭 이번 주 월요일 구하기 (YYYY-MM-DD)
+  // =========================
+  const getWeekStartMondayStr = (base = new Date()) => {
+    const d = new Date(base);
+    const day = d.getDay(); // 0=Sun..6=Sat
+    const diff = day === 0 ? -6 : 1 - day;
+    d.setDate(d.getDate() + diff);
+    d.setHours(0, 0, 0, 0);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const da = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${da}`;
+  };
+
+  // =========================
   // 스케줄 조회 (관리자)
   // =========================
-  router.get("/schedules", verifyToken, async (_req, res) => {
+  router.get("/schedules", verifyToken, async (req, res) => {
     try {
-      const schedules = await db.all(`
-        SELECT
-          sch.student_id AS student_id,  -- ✅ 프론트가 기대하는 필드명
-          s.name         AS name,
-          sch.day        AS day,
-          sch.start      AS start,
-          sch.end        AS end,
-          sch.type       AS type,
-          sch.description AS description
-        FROM schedules sch
-        LEFT JOIN students s ON s.id = sch.student_id
-        ORDER BY sch.student_id, sch.day, sch.start
-      `);
+      const { weekStart } = req.query;
+      let schedules = [];
+
+      if (weekStart) {
+        // 1) 요청 주차 먼저 시도
+        schedules = await db.all(
+          `
+          SELECT
+            sch.student_id AS student_id,
+            s.name         AS name,
+            sch.day        AS day,
+            sch.start      AS start,
+            sch.end        AS end,
+            sch.type       AS type,
+            sch.description AS description,
+            sch.week_start AS week_start,
+            sch.saved_at   AS saved_at
+          FROM schedules sch
+          LEFT JOIN students s ON s.id = sch.student_id
+          WHERE sch.week_start = ?
+          ORDER BY sch.student_id, sch.day, sch.start
+          `,
+          [String(weekStart).slice(0, 10)]
+        );
+
+        // 2) 0건이면 DB에 존재하는 **최신 주차**로 폴백
+        if (!Array.isArray(schedules) || schedules.length === 0) {
+          const latest = await db.get(`
+            SELECT week_start
+            FROM schedules
+            GROUP BY week_start
+            ORDER BY MAX(saved_at) DESC
+            LIMIT 1
+          `);
+          if (latest?.week_start) {
+            schedules = await db.all(
+              `
+              SELECT
+                sch.student_id AS student_id,
+                s.name         AS name,
+                sch.day        AS day,
+                sch.start      AS start,
+                sch.end        AS end,
+                sch.type       AS type,
+                sch.description AS description,
+                sch.week_start AS week_start,
+                sch.saved_at   AS saved_at
+              FROM schedules sch
+              LEFT JOIN students s ON s.id = sch.student_id
+              WHERE sch.week_start = ?
+              ORDER BY sch.student_id, sch.day, sch.start
+              `,
+              [latest.week_start]
+            );
+            // 응답 헤더로 실제 반환 주차 알려주기(선택)
+            res.setHeader("X-Actual-WeekStart", latest.week_start);
+          }
+        }
+      } else {
+        // weekStart 없이 오면 **최신 주차**를 바로 반환
+        const latest = await db.get(`
+          SELECT week_start
+          FROM schedules
+          GROUP BY week_start
+          ORDER BY MAX(saved_at) DESC
+          LIMIT 1
+        `);
+        if (latest?.week_start) {
+          schedules = await db.all(
+            `
+            SELECT
+              sch.student_id AS student_id,
+              s.name         AS name,
+              sch.day        AS day,
+              sch.start      AS start,
+              sch.end        AS end,
+              sch.type       AS type,
+              sch.description AS description,
+              sch.week_start AS week_start,
+              sch.saved_at   AS saved_at
+            FROM schedules sch
+            LEFT JOIN students s ON s.id = sch.student_id
+            WHERE sch.week_start = ?
+            ORDER BY sch.student_id, sch.day, sch.start
+            `,
+            [latest.week_start]
+          );
+          res.setHeader("X-Actual-WeekStart", latest.week_start);
+        } else {
+          schedules = [];
+        }
+      }
+
       res.json(schedules || []);
     } catch (error) {
       console.error("❌ 스케줄 조회 오류:", error.message);
@@ -100,7 +195,7 @@ export default function adminRoutes(db) {
   });
 
   // =========================
-  // 관리자 설정 저장 (새 레코드 추가) — 메서드 표준화: PUT
+  // 관리자 설정 저장 (새 레코드 추가)
   // =========================
   router.put("/settings", verifyToken, async (req, res) => {
     try {
@@ -128,7 +223,6 @@ export default function adminRoutes(db) {
         ]
       );
 
-      // 방금 저장된 최신 레코드 반환
       const latest = await db.get(
         `SELECT * FROM settings ORDER BY id DESC LIMIT 1`
       );
@@ -157,9 +251,7 @@ export default function adminRoutes(db) {
   });
 
   // =========================
-  // 학생 등록 (id 없으면 자동 생성)
-  //  - DB 스키마: students.id TEXT PRIMARY KEY
-  //  - 숫자 문자열 ID를 사용하는 기존 데이터와의 호환을 위해 CAST 기반 증가 생성
+  // 학생 등록
   // =========================
   router.post("/students", verifyToken, async (req, res) => {
     try {
@@ -212,8 +304,7 @@ export default function adminRoutes(db) {
   });
 
   // =========================
-  // 🔥 (추가) 학생 수정
-  // 프런트 StudentDetailModal에서 axios.put(`/admin/students/:id`) 호출
+  // 학생 수정
   // =========================
   router.put("/students/:id", verifyToken, async (req, res) => {
     try {
@@ -229,17 +320,11 @@ export default function adminRoutes(db) {
         `UPDATE students
            SET name = ?, grade = ?, studentPhone = ?, parentPhone = ?
          WHERE id = ?`,
-        [
-          name ?? "",
-          grade ?? "",
-          studentPhone ?? "",
-          parentPhone ?? "",
-          id,
-        ]
+        [name ?? "", grade ?? "", studentPhone ?? "", parentPhone ?? "", id]
       );
 
       const updated = await db.get("SELECT * FROM students WHERE id = ?", [id]);
-      return res.json({ success: true, message: "학생 정보가 수정되었습니다.", student: updated });
+      return res.json({ success: true, message: "학생 정보 수정 완료", student: updated });
     } catch (err) {
       console.error("❌ 학생 수정 오류:", err.message);
       res.status(500).json({ error: "학생 수정 실패", details: err.message });
@@ -247,7 +332,7 @@ export default function adminRoutes(db) {
   });
 
   // =========================
-  // 관리자 로그인 (토큰 발급) — verifyToken 불필요
+  // 관리자 로그인
   // =========================
   router.post("/login", async (req, res) => {
     const { username, password } = req.body || {};
@@ -266,17 +351,11 @@ export default function adminRoutes(db) {
         return res.status(401).json({ error: "비밀번호가 올바르지 않습니다." });
       }
 
-      let token;
-      try {
-        token = jwt.sign(
-          { id: admin.id, username: admin.username, role: admin.role || "admin" },
-          ensureJwtSecret(),
-          { expiresIn: "1d" }
-        );
-      } catch (e) {
-        console.error("❌ JWT 발급 오류:", e.message);
-        return res.status(500).json({ error: "서버 설정 오류: JWT 발급 실패" });
-      }
+      const token = jwt.sign(
+        { id: admin.id, username: admin.username, role: admin.role || "admin" },
+        ensureJwtSecret(),
+        { expiresIn: "1d" }
+      );
 
       res.json({ success: true, token });
     } catch (err) {
@@ -286,21 +365,14 @@ export default function adminRoutes(db) {
   });
 
   // -------------------------
-  // 🔒 로그인 이후 보호 라우트 일괄 적용(기존 verifyToken 데코레이터도 그대로 유지)
+  // 🔒 로그인 이후 보호 라우트
   // -------------------------
   router.use(verifyToken);
 
-  // =========================
-  // 🔥 (추가) 인증 상태 확인용 /auth-check
-  // =========================
   router.get("/auth-check", (req, res) => {
-    // verifyToken을 통과했다면 토큰이 유효
     res.json({ ok: true, admin: req.admin || null });
   });
 
-  // =========================
-  // 🔥 (추가) 내 정보
-  // =========================
   router.get("/me", async (req, res) => {
     try {
       const me = await db.get(
@@ -315,42 +387,46 @@ export default function adminRoutes(db) {
   });
 
   // =========================
-  // 학생별 스케줄 상세 조회
+  // ✅ (핵심 수정) 학생 + 일정 조회 (이번 주만)
   // =========================
-  
-  router.get("/student-schedules", verifyToken, async (_req, res) => {
+  router.get("/studentschedules", verifyToken, async (req, res) => {
     try {
-      // ✅ 수정본: 프런트가 기대하는 student_id 를 명시적으로 포함
-      const schedules = await db.all(`
-        SELECT
-          sch.student_id AS student_id,    -- ← 프런트에서 필요
-          s.name                            AS name,
-          sch.day                           AS day,
-          sch.start                         AS start,
-          sch.end                           AS end,
-          sch.type                          AS type,
-          sch.description                   AS description
-        FROM schedules sch
-        LEFT JOIN students s ON s.id = sch.student_id
-        ORDER BY sch.student_id, sch.day, sch.start
-      `);
+      const { weekStart } = req.query;
+      const week_start =
+        typeof weekStart === "string" && weekStart.length >= 8
+          ? weekStart.slice(0, 10)
+          : getWeekStartMondayStr(new Date());
 
-      res.json(schedules || []);
-    } catch (error) {
-      console.error("❌ 학생 스케줄 상세 조회 오류:", error.message);
-      res.status(500).json({ error: "학생 스케줄 불러오기 실패" });
+      const students = await db.all("SELECT * FROM students");
+      const schedules = await db.all(
+        "SELECT * FROM schedules WHERE week_start = ?",
+        [week_start]
+      );
+
+      res.json({ students, schedules });
+    } catch (err) {
+      console.error("❌ 학생 + 일정 불러오기 실패:", err.message);
+      res.status(500).json({ error: "학생 + 일정 불러오기 실패" });
     }
   });
-   router.get("/studentschedules", verifyToken, async (_req, res) => {
-     try {
-        const students = await db.all("SELECT * FROM students");
-        const schedules = await db.all("SELECT * FROM schedules");
-        res.json({ students, schedules });
-      } catch (err) {
-        console.error("❌ 학생 + 일정 불러오기 실패:", err.message);
-        res.status(500).json({ error: "학생 + 일정 불러오기 실패" });
-      }
-    });
+
+  // =========================
+  // 전체 일정 삭제 (관리자용 긴급 초기화)
+  // =========================
+  router.delete("/schedules/clearAll", verifyToken, async (req, res) => {
+    try {
+      console.log("⚠️ 관리자 전체 일정 삭제 요청 수신됨");
+
+      await db.run("DELETE FROM schedules");
+      await db.run("DELETE FROM sqlite_sequence WHERE name='schedules'");
+
+      console.log("🧹 모든 일정 데이터 초기화 완료");
+      res.json({ success: true, message: "모든 일정이 삭제되었습니다." });
+    } catch (err) {
+      console.error("❌ 전체 일정 삭제 오류:", err.message);
+      res.status(500).json({ success: false, message: "삭제 중 오류 발생" });
+    }
+  });
 
   return router;
 }
