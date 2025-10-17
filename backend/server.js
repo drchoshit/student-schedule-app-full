@@ -614,6 +614,7 @@ app.get("/api/policy/active", async (req, res) => {
 /* ===============================
    Orders / Payments
    =============================== */
+// ✅ 수정 후 완전한 코드
 app.post("/api/orders/commit", async (req, res) => {
   try {
     const { code, items } = req.body || {};
@@ -622,7 +623,6 @@ app.post("/api/orders/commit", async (req, res) => {
 
     const s = await get("SELECT * FROM students WHERE code=?", [code]);
     if (!s) return res.status(404).json({ ok: false, error: "student not found" });
-
     const now = dayjs().toISOString();
     let inserted = 0;
     let skipped = 0;
@@ -631,7 +631,6 @@ app.post("/api/orders/commit", async (req, res) => {
       if (!it?.date || !it?.slot) continue;
 
       try {
-        // 이미 동일한 날짜·슬롯이 존재하는지 검사
         const existing = await get(
           "SELECT id FROM orders WHERE student_id=? AND date=? AND slot=?",
           [s.id, it.date, it.slot]
@@ -639,10 +638,9 @@ app.post("/api/orders/commit", async (req, res) => {
 
         if (existing) {
           skipped++;
-          continue; // 중복 건은 건너뜀
+          continue;
         }
 
-        // 신규만 추가
         await run(
           "INSERT INTO orders(student_id,date,slot,price,status,created_at) VALUES(?,?,?,?,?,?)",
           [s.id, it.date, it.slot, it.price, "SELECTED", now]
@@ -650,7 +648,7 @@ app.post("/api/orders/commit", async (req, res) => {
         inserted++;
       } catch (e) {
         console.error("❌ Order insert error:", e.message);
-        continue; // 에러 발생해도 서버 중단 없이 다음 건 진행
+        continue;
       }
     }
 
@@ -661,7 +659,7 @@ app.post("/api/orders/commit", async (req, res) => {
   }
 });
 
-// ✅ 이 부분을 여기! (commit 바깥에 추가)
+// ✅ 수정된 위치: commit 바로 아래에 by-student 추가
 app.get("/api/orders/by-student/:code", async (req, res) => {
   try {
     const { code } = req.params;
@@ -1395,4 +1393,21 @@ app.get(/^\/(?!api\/).*/, (_req, res) => {
 console.log("ENV.PORT =", process.env.PORT);
 console.log("Starting server, PORT =", PORT);
 console.log("Serving static from:", PUBLIC_DIR);
+
+// ============================
+// Debug: Registered Routes 확인 (즉시 버전)
+// ============================
+console.log("=== REGISTERED ROUTES ===");
+if (!app._router) {
+  console.log("⚠️  app._router is undefined — Express not mounted properly");
+} else {
+  app._router.stack
+    .filter(r => r.route)
+    .forEach(r => {
+      const methods = Object.keys(r.route.methods).join(",").toUpperCase();
+      console.log(`${methods.padEnd(8)} ${r.route.path}`);
+    });
+}
+console.log("=== END ROUTES ===");
+
 app.listen(PORT, "0.0.0.0", () => console.log("Server started on port", PORT));
