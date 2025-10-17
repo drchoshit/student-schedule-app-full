@@ -51,7 +51,8 @@ export default function Student(){
     return m;
   },[policy]);
 
-  const price = policy?.base_price || 0;
+  // ✅ 가격 기본값 보정
+  const price = Number(policy?.base_price) || 0;
 
   // 기간 → 날짜 배열
   useEffect(()=>{
@@ -79,7 +80,6 @@ export default function Student(){
           const e = pol.end_date   || s;
           setRangeStart(s); setRangeEnd(e);
         }catch(e){
-          // 자동 복구 실패해도 저장 데이터는 지우지 않음
           setPolicy(null); setRangeStart(''); setRangeEnd(''); setWeekDates([]);
         }finally{
           setLsReady(true);
@@ -103,7 +103,7 @@ export default function Student(){
     if(!lsReady) return;
     const saved = readLS();
     const selections = saved.selections || {};
-    if(code){ selections[code] = selected; } // 코드가 비어있으면 덮어쓰지 않음
+    if(code){ selections[code] = selected; } 
     writeLS({ lastCode: code, lastName: name, phone, selections });
   },[code, name, phone, selected, lsReady]);
 
@@ -125,11 +125,11 @@ export default function Student(){
   }
 
   function toggle(date, slot){
-    const key = `${date}-${slot}`;
+    const key = `${date}-${slot.toUpperCase().trim()}`;
     setSelected(s => ({ ...s, [key]: !s[key] }));
   }
   function removeItem(it){
-    const key = `${it.date}-${it.slot}`;
+    const key = `${it.date}-${it.slot.toUpperCase().trim()}`;
     setSelected(s => ({ ...s, [key]: false }));
   }
 
@@ -138,19 +138,25 @@ export default function Student(){
     .map(([k])=>{
       const lastDash = k.lastIndexOf('-');
       const d = k.slice(0, lastDash);
-      const slot = k.slice(lastDash + 1);
+      const slot = k.slice(lastDash + 1).toUpperCase().trim();
       return { date: d, slot, price };
     });
+
   const total = items.reduce((a,b)=>a+b.price,0);
 
+  // ✅ 안정화된 commit
   async function commit(){
     if(!code) return alert('코드를 먼저 입력하세요.');
     if(items.length===0) return alert('선택이 없습니다.');
-    // 문자 확인 가드 제거: smsSent 여부와 모달 호출을 더 이상 체크하지 않습니다.
+
+    const invalid = items.some(it => typeof it.price !== 'number' || isNaN(it.price));
+    if(invalid) return alert('가격 정보가 유효하지 않습니다. 관리자에게 문의하세요.');
+
     try{
-      await api.post('/orders/commit',{ code, items });
+      await api.post('/orders/commit', { code, items });
       alert('도시락 신청 완료(결재 전)');
-    }catch{
+    }catch(e){
+      console.error('도시락 신청 실패:', e?.response?.data || e);
       alert('저장에 실패했습니다. 잠시 후 다시 시도해 주세요.');
     }
   }
@@ -195,7 +201,6 @@ export default function Student(){
     }
   }
 
-  // 현재 코드의 임시 선택만 초기화
   function resetSelections(){
     setSelected({});
     setSmsSent(true);
@@ -243,8 +248,6 @@ export default function Student(){
               {weekDates.map(d=>{
                 const wd = new Date(d).getDay();
                 const wdCode=['SUN','MON','TUE','WED','THU','FRI','SAT'][wd];
-
-                // 카드 숨김: 허용 요일 X, 혹은 점/저녁 모두 막힘
                 const allowedDay = allowed.has(wdCode);
                 const blockedBoth =
                   nosvc.get(`${d}-BOTH`) ||
@@ -345,7 +348,6 @@ export default function Student(){
         })()}
       </aside>
 
-      {/* Global modal: 문자 요구 */}
       {showSmsRequire && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl p-6 w-[90vw] max-w-md shadow-xl">
