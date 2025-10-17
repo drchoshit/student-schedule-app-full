@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+console.log("✅ RUNNING SERVER FILE PATH:", import.meta.url);
 import path from "path";
 import fs from "fs";
 import multer from "multer";
