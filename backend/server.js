@@ -630,23 +630,28 @@ app.post("/api/orders/commit", async (req, res) => {
     for (const it of items) {
       if (!it?.date || !it?.slot) continue;
 
-      // ✅ 이미 동일한 날짜·슬롯이 존재하는지 검사
-      const existing = await get(
-        "SELECT id FROM orders WHERE student_id=? AND date=? AND slot=?",
-        [s.id, it.date, it.slot]
-      );
+      try {
+        // 이미 동일한 날짜·슬롯이 존재하는지 검사
+        const existing = await get(
+          "SELECT id FROM orders WHERE student_id=? AND date=? AND slot=?",
+          [s.id, it.date, it.slot]
+        );
 
-      if (existing) {
-        skipped++;
-        continue; // 중복 건은 건너뜀
+        if (existing) {
+          skipped++;
+          continue; // 중복 건은 건너뜀
+        }
+
+        // 신규만 추가
+        await run(
+          "INSERT INTO orders(student_id,date,slot,price,status,created_at) VALUES(?,?,?,?,?,?)",
+          [s.id, it.date, it.slot, it.price, "SELECTED", now]
+        );
+        inserted++;
+      } catch (e) {
+        console.error("❌ Order insert error:", e.message);
+        continue; // 에러 발생해도 서버 중단 없이 다음 건 진행
       }
-
-      // ✅ 신규만 추가
-      await run(
-        "INSERT INTO orders(student_id,date,slot,price,status,created_at) VALUES(?,?,?,?,?,?)",
-        [s.id, it.date, it.slot, it.price, "SELECTED", now]
-      );
-      inserted++;
     }
 
     res.json({ ok: true, inserted, skipped });
