@@ -1,21 +1,6 @@
 {
-<<<<<<< HEAD
-  "name": "doshirak-app",
-  "private": true,
+  "name": "dosirak-app",
   "version": "1.3.0",
-  "scripts": {
-    "dev": "concurrently \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"",
-    "install-all": "npm --prefix backend i && npm --prefix frontend i",
-    "build": "npm --prefix frontend run build",
-    "start": "npm --prefix backend run start"
-  },
-  "devDependencies": {
-    "concurrently": "^8.2.2"
-  }
-}
-=======
-  "name": "student-schedule-app-full",
-  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -45,4 +30,3 @@
     "xlsx": "^0.18.5"
   }
 }
->>>>>>> 5e3c3a9da42c251e187f0a2e326fd3db2a1a22fb
