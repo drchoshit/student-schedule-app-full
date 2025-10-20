@@ -405,6 +405,53 @@ export default function adminRoutes(db) {
       res.status(500).json({ success: false, message: "삭제 중 오류 발생" });
     }
   });
+  
+  // =========================
+  // ✅ 새 주차 일정 복사 (AdminDashboard.jsx 자동 복사용)
+  // =========================
+  router.post("/copyWeek", verifyToken, async (req, res) => {
+    const { fromWeek, toWeek } = req.body;
+    if (!fromWeek || !toWeek) {
+      return res.status(400).json({ error: "fromWeek, toWeek 필수" });
+    }
+
+    try {
+      const rows = await db.all("SELECT * FROM schedules WHERE week_start = ?", [fromWeek]);
+      if (!rows.length) {
+        return res.json({ success: true, message: "복사할 데이터 없음" });
+      }
+
+      const existing = await db.get("SELECT COUNT(*) as cnt FROM schedules WHERE week_start = ?", [toWeek]);
+      if (existing.cnt > 0) {
+        return res.json({ success: true, message: "이미 새 주차 데이터 존재" });
+      }
+
+      const stmt = await db.prepare(`
+        INSERT INTO schedules (student_id, student_code, day, start, end, type, description, week_start, saved_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+      `);
+      for (const r of rows) {
+        await stmt.run(
+          r.student_id,
+          r.student_code || "",
+          r.day,
+          r.start,
+          r.end,
+          r.type,
+          r.description,
+          toWeek
+        );
+      }
+      await stmt.finalize();
+
+      console.log(`🆕 ${fromWeek} → ${toWeek} 일정 복사 완료 (${rows.length}개)`);
+
+      res.json({ success: true, copied: rows.length });
+    } catch (err) {
+      console.error("❌ copyWeek error:", err);
+      res.status(500).json({ error: "주차 복사 중 오류" });
+    }
+  });
 
   return router;
 }

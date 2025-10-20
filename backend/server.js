@@ -1,8 +1,8 @@
 // ✅ 최상단에 추가하세요 (맨 위)
 import dotenv from "dotenv";
 import path from "path"; // ✅ path 모듈 추가
-dotenv.config({ path: './backend/.env' }); // 경로 명시
 import { fileURLToPath } from "url";
+dotenv.config({ path: path.resolve(process.cwd(), "backend/.env") }); // ✅ 수정됨: Render에서도 정상 로드
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const IS_RENDER = !!process.env.PORT; // ✅ 추가
@@ -10,6 +10,7 @@ const IS_RENDER = !!process.env.PORT; // ✅ 추가
 console.log("📂 현재 실행 경로:", process.cwd());
 console.log("✅ env 테스트 (API KEY):", process.env.COOLSMS_API_KEY || "값 없음");
 console.log("✅ env 테스트 (SENDER):", process.env.COOLSMS_SENDER || "값 없음");
+console.log("✅ JWT_SECRET:", process.env.JWT_SECRET ? "Loaded" : "❌ Not Loaded");
 
 // ✅ 그 후에 다른 모듈 import
 import express from "express";
@@ -90,9 +91,10 @@ const killProcessOnPort = (port) => {
     const isRender = !!process.env.RENDER;
     if (!isRender) killProcessOnPort(5000);
 
+    // ✅ 수정됨: 절대 경로로 DB 지정 (Render/로컬 모두 기존 DB 유지)
     const DB_FILE = process.env.RENDER
       ? "/data/database.sqlite"
-      : path.join(__dirname, "database.sqlite");
+      : path.resolve(__dirname, "database.sqlite");
 
     console.log("📄 DB file path (resolved):", DB_FILE);
     console.log("✅ NODE_ENV:", process.env.NODE_ENV);
