@@ -80,12 +80,11 @@ export default function adminRoutes(db) {
             for (const row of lastWeekRows) {
               await db.run(
                 `
-                INSERT INTO schedules (student_id, student_code, day, start, end, type, description, week_start, saved_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                INSERT INTO schedules (student_id, day, start, end, type, description, week_start, saved_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
                 `,
                 [
                   row.student_id,
-                  row.student_code || "",
                   row.day,
                   row.start,
                   row.end,
@@ -427,13 +426,12 @@ export default function adminRoutes(db) {
       }
 
       const stmt = await db.prepare(`
-        INSERT INTO schedules (student_id, student_code, day, start, end, type, description, week_start, saved_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+        INSERT INTO schedules (student_id, day, start, end, type, description, week_start, saved_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
       `);
       for (const r of rows) {
         await stmt.run(
           r.student_id,
-          r.student_code || "",
           r.day,
           r.start,
           r.end,
