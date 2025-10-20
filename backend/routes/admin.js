@@ -43,95 +43,71 @@ export default function adminRoutes(db) {
   router.get("/schedules", verifyToken, async (req, res) => {
     try {
       const { weekStart } = req.query;
+      let week_start = weekStart ? String(weekStart).slice(0, 10) : null;
+
       let schedules = [];
 
-      if (weekStart) {
-        // 1) 요청 주차 먼저 시도
+      if (week_start) {
         schedules = await db.all(
           `
-          SELECT
-            sch.student_id AS student_id,
-            s.name         AS name,
-            sch.day        AS day,
-            sch.start      AS start,
-            sch.end        AS end,
-            sch.type       AS type,
-            sch.description AS description,
-            sch.week_start AS week_start,
-            sch.saved_at   AS saved_at
+          SELECT sch.student_id, s.name, sch.day, sch.start, sch.end,
+                sch.type, sch.description, sch.week_start, sch.saved_at
           FROM schedules sch
           LEFT JOIN students s ON s.id = sch.student_id
           WHERE sch.week_start = ?
           ORDER BY sch.student_id, sch.day, sch.start
           `,
-          [String(weekStart).slice(0, 10)]
+          [week_start]
         );
 
-        // 2) 0건이면 DB에 존재하는 **최신 주차**로 폴백
-        if (!Array.isArray(schedules) || schedules.length === 0) {
-          const latest = await db.get(`
+        // ✅ 새 주차 데이터가 없으면 직전 주차 복사 생성
+        if (!schedules || schedules.length === 0) {
+          const lastWeek = await db.get(`
             SELECT week_start
             FROM schedules
             GROUP BY week_start
             ORDER BY MAX(saved_at) DESC
             LIMIT 1
           `);
-          if (latest?.week_start) {
+
+          if (lastWeek?.week_start && lastWeek.week_start !== week_start) {
+            const lastWeekRows = await db.all(
+              `SELECT * FROM schedules WHERE week_start = ?`,
+              [lastWeek.week_start]
+            );
+
+            for (const row of lastWeekRows) {
+              await db.run(
+                `
+                INSERT INTO schedules (student_id, student_code, day, start, end, type, description, week_start, saved_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                `,
+                [
+                  row.student_id,
+                  row.student_code || "",
+                  row.day,
+                  row.start,
+                  row.end,
+                  row.type,
+                  row.description,
+                  week_start,
+                ]
+              );
+            }
+
+            console.log(`🆕 ${lastWeek.week_start} → ${week_start} 일정 자동 복사 완료`);
             schedules = await db.all(
               `
-              SELECT
-                sch.student_id AS student_id,
-                s.name         AS name,
-                sch.day        AS day,
-                sch.start      AS start,
-                sch.end        AS end,
-                sch.type       AS type,
-                sch.description AS description,
-                sch.week_start AS week_start,
-                sch.saved_at   AS saved_at
+              SELECT sch.student_id, s.name, sch.day, sch.start, sch.end,
+                    sch.type, sch.description, sch.week_start, sch.saved_at
               FROM schedules sch
               LEFT JOIN students s ON s.id = sch.student_id
               WHERE sch.week_start = ?
               ORDER BY sch.student_id, sch.day, sch.start
               `,
-              [latest.week_start]
+              [week_start]
             );
-            // 응답 헤더로 실제 반환 주차 알려주기(선택)
-            res.setHeader("X-Actual-WeekStart", latest.week_start);
           }
-        }
-      } else {
-        // weekStart 없이 오면 **최신 주차**를 바로 반환
-        const latest = await db.get(`
-          SELECT week_start
-          FROM schedules
-          GROUP BY week_start
-          ORDER BY MAX(saved_at) DESC
-          LIMIT 1
-        `);
-        if (latest?.week_start) {
-          schedules = await db.all(
-            `
-            SELECT
-              sch.student_id AS student_id,
-              s.name         AS name,
-              sch.day        AS day,
-              sch.start      AS start,
-              sch.end        AS end,
-              sch.type       AS type,
-              sch.description AS description,
-              sch.week_start AS week_start,
-              sch.saved_at   AS saved_at
-            FROM schedules sch
-            LEFT JOIN students s ON s.id = sch.student_id
-            WHERE sch.week_start = ?
-            ORDER BY sch.student_id, sch.day, sch.start
-            `,
-            [latest.week_start]
-          );
-          res.setHeader("X-Actual-WeekStart", latest.week_start);
-        } else {
-          schedules = [];
         }
       }
 
