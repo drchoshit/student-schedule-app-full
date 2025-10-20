@@ -44,7 +44,6 @@ export default function adminRoutes(db) {
     try {
       const { weekStart } = req.query;
       let week_start = weekStart ? String(weekStart).slice(0, 10) : null;
-
       let schedules = [];
 
       if (week_start) {
@@ -60,7 +59,7 @@ export default function adminRoutes(db) {
           [week_start]
         );
 
-        // ✅ 새 주차 데이터가 없으면 직전 주차 복사 생성
+        // ✅ 새 주차 데이터가 없으면 이전 주차 데이터 복사
         if (!schedules || schedules.length === 0) {
           const lastWeek = await db.get(`
             SELECT week_start
@@ -71,6 +70,8 @@ export default function adminRoutes(db) {
           `);
 
           if (lastWeek?.week_start && lastWeek.week_start !== week_start) {
+            console.log(`⚙️ 새 주차(${week_start}) 데이터 없음 → ${lastWeek.week_start} 기준으로 복사 시작`);
+
             const lastWeekRows = await db.all(
               `SELECT * FROM schedules WHERE week_start = ?`,
               [lastWeek.week_start]
@@ -96,6 +97,7 @@ export default function adminRoutes(db) {
             }
 
             console.log(`🆕 ${lastWeek.week_start} → ${week_start} 일정 자동 복사 완료`);
+
             schedules = await db.all(
               `
               SELECT sch.student_id, s.name, sch.day, sch.start, sch.end,
