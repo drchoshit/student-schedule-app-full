@@ -859,24 +859,24 @@ export default function AdminDashboard() {
       }
     };
 
-  // 파일 내보내기/가져오기
+  // 파일 내보내기/가져오기 (⚠️ 초기 렌더 안전 버전)
   const buildFilenamePrefix = (base) => {
-  if (!settings || typeof settings.week_range_text !== "string") {
-    return base;
-  }
+    const raw = settings?.week_range_text;
 
-  const txt = settings.week_range_text.trim();
-  if (!txt) return base;
+    if (typeof raw !== "string") return base;
 
-  const m = txt.match(/(\d{1,2})\/(\d{1,2})\s*~\s*(\d{1,2})\/(\d{1,2})/);
-  if (!m) return toYmd(mondayify(new Date()));
+    const txt = raw.trim();
+    if (!txt) return base;
 
-  const year = new Date().getFullYear();
-  const s = `${year}${m[1].padStart(2, "0")}${m[2].padStart(2, "0")}`;
-  const e = `${year}${m[3].padStart(2, "0")}${m[4].padStart(2, "0")}`;
+    const m = txt.match(/(\d{1,2})\/(\d{1,2})\s*~\s*(\d{1,2})\/(\d{1,2})/);
+    if (!m) return base;
 
-  return `${base}_${s}-${e}`;
-};
+    const year = new Date().getFullYear();
+    const s = `${year}${m[1].padStart(2, "0")}${m[2].padStart(2, "0")}`;
+    const e = `${year}${m[3].padStart(2, "0")}${m[4].padStart(2, "0")}`;
+
+    return `${base}_${s}-${e}`;
+  };
 
   const handleExportExternalExcel = () => {
     exportExternalSchedulesToExcel(schedules || [], students || [], buildFilenamePrefix("외부일정"), {
