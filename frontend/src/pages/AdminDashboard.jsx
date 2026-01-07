@@ -15,7 +15,7 @@ import LiveWeekCalendar from "../components/LiveWeekCalendar";
    공용 응답 가드
    - 항상 JSON만 사용 (HTML/비정상 응답이면 throw)
    - 401/403이면 /admin/login 으로 보냄
-========================= */
+========================= */  
 function useSafeJSON(navigate) {
   return async function safeJSON(promise) {
     try {
@@ -193,12 +193,22 @@ export default function AdminDashboard() {
   const dayMap = { 월: 0, 화: 1, 수: 2, 목: 3, 금: 4, 토: 5 };
 
   const getBaseDate = () => {
-    const m = settings.week_range_text.match(/(\d+)\/(\d+)\s*~\s*(\d+)\/(\d+)/);
-    if (!m) return new Date();
-    const month = parseInt(m[1], 10) - 1;
-    const day = parseInt(m[2], 10);
-    return new Date(new Date().getFullYear(), month, day);
-  };
+  const text = settings && typeof settings.week_range_text === "string"
+    ? settings.week_range_text
+    : "";
+
+  if (!text) return new Date();
+
+  const m = text.match(/(\d{1,2})\/(\d{1,2})\s*~\s*(\d{1,2})\/(\d{1,2})/);
+  if (!m) return new Date();
+
+  const year = new Date().getFullYear();
+  const month = Number(m[1]) - 1;
+  const day = Number(m[2]);
+
+  return new Date(year, month, day);
+};
+
   const mondayify = (d) => {
     const nd = new Date(d);
     const dow = nd.getDay();
@@ -222,7 +232,13 @@ export default function AdminDashboard() {
 
     // ✅ 설정의 주차 텍스트("11/3~11/9")에서 시작일(월요일 기준) 추출 → YYYY-MM-DD 반환
     function weekStartFromRangeText(rangeText) {
-      const m = String(rangeText || "").match(/(\d{1,2})\/(\d{1,2})/); // "11/3~11/9" → 11, 3
+      const m =
+        typeof rangeText === "string"
+          ? rangeText.match(/(\d{1,2})\/(\d{1,2})/)
+          : null;
+
+      if (!m) return null;
+
       const mondayify = (d) => {
         const nd = new Date(d);
         const dow = nd.getDay();
@@ -747,6 +763,9 @@ export default function AdminDashboard() {
   
   // 검색/정렬 적용된 목록
   if (loading) return <div className="p-4 text-center text-lg">⏳ 데이터 로딩 중...</div>;
+  if (!settings || typeof settings.week_range_text !== "string") {
+  return <div className="p-4 text-center text-lg">⏳ 설정 불러오는 중...</div>;
+}
 
   const filteredStudents = students
     .filter((s) => (s.name || "").toLowerCase().includes(searchText.toLowerCase()))
@@ -840,17 +859,23 @@ export default function AdminDashboard() {
       }
     };
 
-  // 파일 내보내기/가져오기
+  // 파일 내보내기/가져오기 (⚠️ 초기 렌더 안전 버전)
   const buildFilenamePrefix = (base) => {
-    const txt = settings?.week_range_text || "";
+    const raw = settings?.week_range_text;
+
+    if (typeof raw !== "string") return base;
+
+    const txt = raw.trim();
+    if (!txt) return base;
+
     const m = txt.match(/(\d{1,2})\/(\d{1,2})\s*~\s*(\d{1,2})\/(\d{1,2})/);
-    if (m) {
-      const yyyy = new Date().getFullYear();
-      const s = `${yyyy}${m[1].padStart(2, "0")}${m[2].padStart(2, "0")}`;
-      const e = `${yyyy}${m[3].padStart(2, "0")}${m[4].padStart(2, "0")}`;
-      return `${base}_${s}-${e}`;
-    }
-    return base;
+    if (!m) return base;
+
+    const year = new Date().getFullYear();
+    const s = `${year}${m[1].padStart(2, "0")}${m[2].padStart(2, "0")}`;
+    const e = `${year}${m[3].padStart(2, "0")}${m[4].padStart(2, "0")}`;
+
+    return `${base}_${s}-${e}`;
   };
 
   const handleExportExternalExcel = () => {
@@ -1046,7 +1071,12 @@ export default function AdminDashboard() {
             // 0) 주차(weekStart) 계산
             const baseTxt = detectedRangeText || settings.week_range_text || "";
             const weekStartStr = (() => {
-              const m = String(baseTxt).match(/(\d{1,2})\/(\d{1,2})/);
+              const m =
+                typeof baseTxt === "string"
+                  ? baseTxt.match(/(\d{1,2})\/(\d{1,2})/)
+                  : null;
+
+              if (!m) return toYmd(mondayify(new Date()));
               if (m) {
                 const year = new Date().getFullYear();
                 const d = new Date(year, Number(m[1]) - 1, Number(m[2]));
@@ -1290,11 +1320,18 @@ export default function AdminDashboard() {
   }
 
   // 날짜 라벨
-  function getWeekDateLabels(rangeText = "") {
-    const m = String(rangeText).match(/(\d{1,2})\/(\d{1,2})\s*~\s*(\d{1,2})\/(\d{1,2})/);
+  function getWeekDateLabels(rangeText) {
+    if (typeof rangeText !== "string" || !rangeText.trim()) {
+      return ["", "", "", "", "", "", ""];
+    }
+
+    const m = rangeText.match(
+      /(\d{1,2})\/(\d{1,2})\s*~\s*(\d{1,2})\/(\d{1,2})/
+    );
     if (!m) return ["", "", "", "", "", "", ""];
+
     const year = new Date().getFullYear();
-    const start = new Date(year, Number(m[1]) - 1, Number(m[2]) );
+    const start = new Date(year, Number(m[1]) - 1, Number(m[2]));
     const labels = [];
     for (let i = 0; i < 7; i++) {
       const d = new Date(start);
