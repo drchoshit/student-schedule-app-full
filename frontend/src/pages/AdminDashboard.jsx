@@ -763,9 +763,6 @@ export default function AdminDashboard() {
   
   // 검색/정렬 적용된 목록
   if (loading) return <div className="p-4 text-center text-lg">⏳ 데이터 로딩 중...</div>;
-  if (!settings || typeof settings.week_range_text !== "string") {
-  return <div className="p-4 text-center text-lg">⏳ 설정 불러오는 중...</div>;
-}
 
   const filteredStudents = students
     .filter((s) => (s.name || "").toLowerCase().includes(searchText.toLowerCase()))
