@@ -735,7 +735,138 @@ export default function AdminDashboard() {
     }
   };
 
-    // ✅ 학생 정보 엑셀 다운로드 함수
+  // ✅ 학생 일정(JSON) 다운로드 함수
+  const handleDownloadStudentSchedules = () => {
+    const latest = filterToLatestSchedules(schedules);
+    if (!latest || latest.length === 0) {
+      alert("다운로드할 일정이 없습니다.");
+      return;
+    }
+
+    const safeStudents = arr(students);
+    const studentNameById = new Map(
+      safeStudents.map((s) => [String(s?.id ?? ""), s?.name || s?.id || ""])
+    );
+
+    const dayOrder = ["월", "화", "수", "목", "금", "토", "일"];
+    const dayRank = (d) => {
+      const idx = dayOrder.indexOf(d);
+      return idx === -1 ? 99 : idx;
+    };
+    const toMin = (t) => {
+      const m = /^(\d{1,2}):(\d{1,2})$/.exec(String(t || ""));
+      if (!m) return 0;
+      return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+    };
+
+    const normalized = latest
+      .map((it) => {
+        const c = canon(it);
+        return {
+          student_id: c.student_id,
+          day: c.day,
+          start: c.start,
+          end: c.end,
+          type: c.type,
+          description: (c.description ?? "").toString(),
+        };
+      })
+      .filter((it) => it.student_id && it.day && it.start && it.end);
+
+    const byStudentMap = new Map();
+    for (const it of normalized) {
+      const list = byStudentMap.get(it.student_id) || [];
+      list.push({
+        day: it.day,
+        start: it.start,
+        end: it.end,
+        type: it.type,
+        description: it.description,
+      });
+      byStudentMap.set(it.student_id, list);
+    }
+
+    const byStudent = Array.from(byStudentMap.entries())
+      .map(([id, items]) => {
+        items.sort((a, b) => {
+          const d = dayRank(a.day) - dayRank(b.day);
+          if (d) return d;
+          const s = toMin(a.start) - toMin(b.start);
+          if (s) return s;
+          return toMin(a.end) - toMin(b.end);
+        });
+        return {
+          id,
+          name: studentNameById.get(id) || id,
+          items,
+        };
+      })
+      .sort((a, b) => (a.name || "").localeCompare(b.name || "", "ko"));
+
+    const base =
+      weekStartYmd && /^\d{4}-\d{2}-\d{2}$/.test(weekStartYmd)
+        ? new Date(`${weekStartYmd}T00:00:00`)
+        : mondayify(getBaseDate());
+    const baseYmd = toYmd(base);
+
+    const calendarEvents = normalized
+      .filter((it) => it.type !== "미등원")
+      .map((it) => {
+        const idx = dayOrder.indexOf(it.day);
+        const d = new Date(base);
+        d.setDate(base.getDate() + (idx >= 0 ? idx : 0));
+        const ymd = toYmd(d);
+
+        const studentName = studentNameById.get(it.student_id) || it.student_id;
+        const label = (it.description || "").trim();
+        const isExternalLike = it.type === "외부" || it.type === "빈구간";
+        const title =
+          isExternalLike && label
+            ? `${studentName} ${it.start}~${it.end} (${it.type}) [${label}]`
+            : `${studentName} ${it.start}~${it.end} (${it.type || ""})`;
+
+        return {
+          student_id: it.student_id,
+          student_name: studentName,
+          day: it.day,
+          start: `${ymd}T${it.start}`,
+          end: `${ymd}T${it.end}`,
+          type: it.type,
+          description: label,
+          title,
+        };
+      });
+
+    const payload = {
+      meta: {
+        exportedAt: new Date().toISOString(),
+        weekRangeText: settings?.week_range_text || "",
+        weekStartYmd: weekStartYmd || baseYmd,
+      },
+      students: safeStudents.map((s) => ({ id: s.id, name: s.name })),
+      schedules: normalized,
+      byStudent,
+      calendarEvents,
+    };
+
+    const fileStamp = (weekStartYmd || baseYmd || new Date().toISOString().slice(0, 10)).replace(
+      /-/g,
+      ""
+    );
+    const filename = `학생일정_${fileStamp}.json`;
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // ✅ 학생 정보 엑셀 다운로드 함수
   const handleDownloadStudents = () => {
     if (!students || students.length === 0) {
       alert("다운로드할 학생 정보가 없습니다.");
@@ -1590,6 +1721,13 @@ export default function AdminDashboard() {
         </h2>
 
         <div className="flex gap-2">
+          {/* 학생 일정 다운로드 버튼 */}
+          <button
+            onClick={handleDownloadStudentSchedules}
+            className="bg-sky-600 text-white px-4 py-2 rounded hover:bg-sky-700"
+          >
+            📥 일정 다운로드
+          </button>
           {/* 학생정보 엑셀 다운로드 버튼 */}
           <button
             onClick={handleDownloadStudents}
