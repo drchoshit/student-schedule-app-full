@@ -20,6 +20,7 @@ import { open } from "sqlite";
 import adminRoutes from "./routes/admin.js";
 import studentRoutes from "./routes/student.js";
 import smsRoutes from "./routes/sms.js"; // ✅ 문자 발송 라우트 추가
+import { verifyToken } from "./middleware/auth.js";
 import { execSync } from "child_process";
 
 const app = express();  // ← 이 줄이 있어야 app.use(...) 호출 가능
@@ -222,8 +223,26 @@ const killProcessOnPort = (port) => {
 
     // ✅ ✅ ✅ [여기 아래에 추가] ===================================
     // 🔥 관리자 긴급 리셋용 라우트
-    app.delete("/api/admin/schedules/clear-all", async (req, res) => {
+    app.delete("/api/admin/schedules/clear-all", verifyToken, async (req, res) => {
       try {
+        const role = String(req.admin?.role || "").trim().toLowerCase();
+        if (!["admin", "superadmin"].includes(role)) {
+          return res.status(403).json({
+            success: false,
+            message: "forbidden: admin role required",
+          });
+        }
+        const dangerousActionsEnabled =
+          String(process.env.ADMIN_DANGEROUS_ACTIONS_ENABLED || "false")
+            .trim()
+            .toLowerCase() === "true";
+        if (!dangerousActionsEnabled) {
+          return res.status(403).json({
+            success: false,
+            message:
+              "schedule clear-all is blocked by safety policy (ADMIN_DANGEROUS_ACTIONS_ENABLED=false)",
+          });
+        }
         console.log("⚠️ 일정 전체 삭제 요청 수신됨.");
 
         const dbConn = await open({

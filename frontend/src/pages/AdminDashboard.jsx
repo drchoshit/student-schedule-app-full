@@ -186,6 +186,14 @@ export default function AdminDashboard() {
   const [detailLatest, setDetailLatest] = useState(null); // { id, completed, schedule: [...] }
   const [detailLoading, setDetailLoading] = useState(false);
 
+  // 학생 DB 연동 미리보기/실행 상태
+  const [syncModalOpen, setSyncModalOpen] = useState(false);
+  const [syncPreviewLoading, setSyncPreviewLoading] = useState(false);
+  const [syncApplyLoading, setSyncApplyLoading] = useState(false);
+  const [syncPreview, setSyncPreview] = useState(null);
+  const [syncApplyResult, setSyncApplyResult] = useState(null);
+  const [syncError, setSyncError] = useState("");
+
   // ✅ 표 위에서 보여줄 “선택 학생 캘린더”
   const [calendarStudent, setCalendarStudent] = useState(null);
 
@@ -455,7 +463,18 @@ export default function AdminDashboard() {
         parentPhone,
       });
       if (res.data?.success) {
-        alert("학생 등록 성공");
+        const failedTargets = arr(res?.data?.sync?.targets).filter(
+          (row) => row?.status === "failed"
+        );
+        if (failedTargets.length > 0) {
+          alert(
+            `학생 등록은 완료되었지만 일부 사이트 연동이 실패했습니다: ${failedTargets
+              .map((row) => row?.target)
+              .join(", ")}`
+          );
+        } else {
+          alert("학생 등록 성공");
+        }
         const next = [...students, { id, name, grade, studentPhone, parentPhone }];
         setStudents(next);
         try {
@@ -483,9 +502,20 @@ export default function AdminDashboard() {
   const deleteStudent = async (id) => {
     if (!window.confirm("정말 이 학생을 삭제하시겠습니까?")) return;
     try {
-      await axiosInstance.delete(`/admin/students/${id}`);
+      const res = await axiosInstance.delete(`/admin/students/${id}`);
       await fetchStudents();
-      alert("학생이 삭제되었습니다.");
+      const failedTargets = arr(res?.data?.sync?.targets).filter(
+        (row) => row?.status === "failed"
+      );
+      if (failedTargets.length > 0) {
+        alert(
+          `학생은 삭제되었지만 일부 사이트 연동이 실패했습니다: ${failedTargets
+            .map((row) => row?.target)
+            .join(", ")}`
+        );
+      } else {
+        alert("학생이 삭제되었습니다.");
+      }
     } catch (err) {
       console.error("학생 삭제 오류:", err);
       alert(err.response?.data?.error || "삭제 실패");
@@ -506,6 +536,66 @@ export default function AdminDashboard() {
     } catch (err) {
       console.error("전체 삭제 오류:", err);
       alert(err.response?.data?.error || "전체 삭제 실패");
+    }
+  };
+
+  const runSyncPreview = async () => {
+    setSyncPreviewLoading(true);
+    setSyncError("");
+    try {
+      const res = await axiosInstance.post("/admin/students/sync/preview");
+      const preview = res?.data?.preview || null;
+      setSyncPreview(preview);
+      return preview;
+    } catch (err) {
+      console.error("학생 DB 연동 미리보기 오류:", err);
+      const msg = err?.response?.data?.error || err?.message || "연동 미리보기에 실패했습니다.";
+      setSyncError(msg);
+      return null;
+    } finally {
+      setSyncPreviewLoading(false);
+    }
+  };
+
+  const openSyncModal = async () => {
+    setSyncModalOpen(true);
+    setSyncApplyResult(null);
+    setSyncPreview(null);
+    setSyncError("");
+    await runSyncPreview();
+  };
+
+  const runSyncApply = async () => {
+    if (!window.confirm("미리보기 결과를 확인했습니다. 실제 동기화를 실행할까요?")) return;
+    setSyncApplyLoading(true);
+    setSyncError("");
+    try {
+      const res = await axiosInstance.post("/admin/students/sync/apply");
+      const result = res?.data?.result || null;
+      setSyncApplyResult(result);
+      if (result?.preview) {
+        setSyncPreview(result.preview);
+      }
+
+      const failedTargets = arr(result?.targets).filter(
+        (t) => t.status === "failed" || t.status === "partial"
+      );
+      if (failedTargets.length > 0) {
+        alert(
+          `동기화는 완료되었지만 일부 대상이 실패했습니다: ${failedTargets
+            .map((t) => t.target)
+            .join(", ")}`
+        );
+      } else {
+        alert("동기화가 완료되었습니다.");
+      }
+    } catch (err) {
+      console.error("학생 DB 연동 실행 오류:", err);
+      const msg = err?.response?.data?.error || err?.message || "연동 실행에 실패했습니다.";
+      setSyncError(msg);
+      alert(`연동 실행 실패: ${msg}`);
+    } finally {
+      setSyncApplyLoading(false);
     }
   };
 
@@ -902,6 +992,28 @@ export default function AdminDashboard() {
       const cmp = (a.name || "").localeCompare(b.name || "", "ko");
       return nameSort === "asc" ? cmp : -cmp;
     });
+
+  const targetLabelMap = {
+    dosirak: "도시락",
+    mentoring: "멘토링",
+    penalty: "벌점제",
+    "legacy-state": "주간일정표",
+  };
+  const labelTarget = (target) => targetLabelMap[target] || target;
+  const statusBadgeClass = (status) => {
+    if (status === "ready" || status === "success") return "bg-green-100 text-green-700";
+    if (status === "partial") return "bg-amber-100 text-amber-700";
+    if (status === "failed") return "bg-red-100 text-red-700";
+    return "bg-gray-100 text-gray-700";
+  };
+  const syncPreviewTargets = arr(syncPreview?.targets);
+  const syncExtraRows = syncPreviewTargets.flatMap((target) =>
+    arr(target?.extras).map((row) => ({
+      target: target?.target || "",
+      id: String(row?.id ?? ""),
+      name: String(row?.name ?? ""),
+    }))
+  );
 
     // ✅ 최신화 (useEffect 로직과 동일한 방식 — 새로고침과 완전 일치)
     const refreshSchedules = async () => {
@@ -1597,7 +1709,7 @@ export default function AdminDashboard() {
 
       <h1 className="text-2xl font-bold mb-4">관리자 페이지</h1>
 
-      <div className="flex gap-4 mb-6">
+      <div className="flex flex-wrap gap-4 mb-3">
         <button onClick={() => openCalendar("student")} className="bg-blue-500 text-white px-4 py-2 rounded">
           학생 별 일정표(캘린더)
         </button>
@@ -1620,8 +1732,35 @@ export default function AdminDashboard() {
           전체 저장
         </button>
 
+        <button
+          onClick={openSyncModal}
+          className="bg-slate-800 text-white px-4 py-2 rounded hover:bg-slate-900 disabled:opacity-50"
+          disabled={syncPreviewLoading || syncApplyLoading}
+        >
+          다른 사이트들과 연동
+        </button>
+
         <input type="file" accept=".json,.xlsx,.xls" onChange={handleFileImport} className="border px-2 py-1" />
       </div>
+
+      {syncPreview && (
+        <div className="mb-6 border rounded bg-amber-50 p-3">
+          <div className="text-sm font-semibold mb-1">
+            연동 점검 결과: 현재 사이트에 없지만 다른 사이트에만 있는 학생 목록
+          </div>
+          {syncExtraRows.length === 0 ? (
+            <p className="text-sm text-gray-700">없음</p>
+          ) : (
+            <ul className="text-sm space-y-1 max-h-40 overflow-y-auto">
+              {syncExtraRows.map((row, idx) => (
+                <li key={`${row.target}-${row.id}-${row.name}-${idx}`} className="text-gray-800">
+                  [{labelTarget(row.target)}] 코드: {row.id || "(없음)"} / 이름: {row.name || "(없음)"}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       <div>
         <CalendarModal
@@ -1945,6 +2084,151 @@ export default function AdminDashboard() {
         </button>
       </div>
 
+      {syncModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/45 flex items-center justify-center p-4">
+          <div className="w-full max-w-5xl bg-white rounded shadow-xl border">
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <h3 className="text-lg font-semibold">학생 DB 연동 미리보기</h3>
+              <button
+                type="button"
+                onClick={() => setSyncModalOpen(false)}
+                className="px-3 py-1 rounded border hover:bg-gray-50"
+                disabled={syncPreviewLoading || syncApplyLoading}
+              >
+                닫기
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3 max-h-[70vh] overflow-y-auto">
+              {syncError && (
+                <div className="border border-red-200 bg-red-50 text-red-700 px-3 py-2 rounded text-sm">
+                  {syncError}
+                </div>
+              )}
+
+              {syncPreviewLoading && (
+                <div className="text-sm text-gray-600">미리보기 계산 중...</div>
+              )}
+
+              {syncPreview && (
+                <>
+                  <div className="text-sm text-gray-700">
+                    기준 학생 수: {syncPreview.sourceCount || 0}명
+                    {" · "}
+                    기준: 이름으로 존재 여부 비교
+                  </div>
+
+                  {arr(syncPreview.sourceDuplicateNames).length > 0 && (
+                    <div className="border border-amber-200 bg-amber-50 rounded p-3">
+                      <div className="font-semibold text-sm mb-1">주의: 기준 DB 내 동일 이름 중복</div>
+                      <ul className="text-sm space-y-1">
+                        {arr(syncPreview.sourceDuplicateNames).map((dup, idx) => (
+                          <li key={`${dup?.nameKey || "dup"}-${idx}`}>
+                            이름키: {dup?.nameKey} / 항목:{" "}
+                            {arr(dup?.items)
+                              .map((item) => `${item?.id || "(id없음)"}:${item?.name || "(이름없음)"}`)
+                              .join(", ")}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {syncPreviewTargets.map((target) => (
+                    <div key={target.target} className="border rounded p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="font-semibold">{labelTarget(target.target)}</div>
+                        <span
+                          className={`text-xs px-2 py-1 rounded ${statusBadgeClass(target.status)}`}
+                        >
+                          {target.status}
+                        </span>
+                      </div>
+
+                      <div className="text-sm text-gray-700 mb-2">
+                        기준 {target.sourceCount || 0}명 / 대상 {target.targetCount || 0}명 / 이름일치{" "}
+                        {target.matchedCount || 0}명 / 추가예정 {target.toAddCount || 0}명 / 기준외{" "}
+                        {target.extraCount || 0}명
+                      </div>
+
+                      {target.message && (
+                        <div className="text-xs text-gray-500 mb-2">{target.message}</div>
+                      )}
+
+                      {arr(target.idCollisions).length > 0 && (
+                        <div className="text-sm text-amber-700 mb-2">
+                          ID 충돌 {target.idCollisions.length}건 (자동 추가 제외)
+                        </div>
+                      )}
+
+                      {arr(target.toAdd).length > 0 && (
+                        <div className="mb-2">
+                          <div className="text-sm font-semibold">추가 예정</div>
+                          <div className="text-sm max-h-32 overflow-y-auto border rounded p-2 bg-gray-50">
+                            {arr(target.toAdd).map((row) => (
+                              <div key={`${target.target}-add-${row.id}-${row.name}`}>
+                                코드: {row.id || "(없음)"} / 이름: {row.name || "(없음)"}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {arr(target.extras).length > 0 && (
+                        <div>
+                          <div className="text-sm font-semibold">기준 외 학생(삭제 안 함, 목록만 표시)</div>
+                          <div className="text-sm max-h-32 overflow-y-auto border rounded p-2 bg-amber-50">
+                            {arr(target.extras).map((row) => (
+                              <div key={`${target.target}-extra-${row.id}-${row.name}`}>
+                                코드: {row.id || "(없음)"} / 이름: {row.name || "(없음)"}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </>
+              )}
+
+              {syncApplyResult && (
+                <div className="border rounded p-3 bg-slate-50">
+                  <div className="font-semibold mb-2">실행 결과</div>
+                  <div className="space-y-1 text-sm">
+                    {arr(syncApplyResult.targets).map((target) => (
+                      <div key={`apply-${target.target}`}>
+                        [{labelTarget(target.target)}] 상태: {target.status} / 적용:{" "}
+                        {target.appliedCount || 0} / 실패: {target.failedCount || 0} / 계획:{" "}
+                        {target.plannedAddCount || 0}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="border-t px-4 py-3 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={runSyncPreview}
+                className="px-3 py-2 rounded border hover:bg-gray-50 disabled:opacity-50"
+                disabled={syncPreviewLoading || syncApplyLoading}
+              >
+                미리보기 다시 계산
+              </button>
+              <button
+                type="button"
+                onClick={runSyncApply}
+                className="bg-slate-800 text-white px-4 py-2 rounded hover:bg-slate-900 disabled:opacity-50"
+                disabled={syncPreviewLoading || syncApplyLoading || !syncPreview}
+              >
+                {syncApplyLoading ? "동기화 실행 중..." : "동기화 실행"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 상세 모달: 서버 기준 최신 주차 결과를 우선 전달 */}
       <div>
         {isDetailModalOpen && selectedStudent && (
@@ -1958,7 +2242,7 @@ export default function AdminDashboard() {
             loading={detailLoading}
             onUpdateStudent={async (updated) => {
               try {
-                await axiosInstance.put(`/admin/students/${updated.id}`, {
+                const res = await axiosInstance.put(`/admin/students/${updated.id}`, {
                   name: updated.name ?? "",
                   grade: updated.grade ?? "",
                   studentPhone: updated.studentPhone ?? "",
@@ -1971,7 +2255,18 @@ export default function AdminDashboard() {
                 try {
                   localStorage.setItem("students", JSON.stringify(updatedList));
                 } catch {}
-                alert("✅ 서버에 학생 정보가 저장되었습니다.");
+                const failedTargets = arr(res?.data?.sync?.targets).filter(
+                  (row) => row?.status === "failed"
+                );
+                if (failedTargets.length > 0) {
+                  alert(
+                    `학생 정보는 저장되었지만 일부 사이트 연동이 실패했습니다: ${failedTargets
+                      .map((row) => row?.target)
+                      .join(", ")}`
+                  );
+                } else {
+                  alert("✅ 서버에 학생 정보가 저장되었습니다.");
+                }
               } catch (err) {
                 console.error("학생 정보 저장 오류:", err);
                 alert("❌ 학생 정보를 저장하지 못했습니다.");

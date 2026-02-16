@@ -4,12 +4,48 @@ import bcrypt from "bcrypt";              // ✅ 비밀번호 해시 비교
 import jwt from "jsonwebtoken";           // ✅ JWT 토큰
 import dotenv from "dotenv";              // ✅ 환경변수
 import { verifyToken } from "../middleware/auth.js"; // ✅ 인증 미들웨어 경로 수정
+import { syncStudentToExternalApps } from "../services/studentSyncService.js";
+import {
+  previewStudentNameSync,
+  applyStudentNameSync,
+} from "../services/studentSyncReconcileService.js";
 dotenv.config();
 
 const { sendSMS } = pkg;
 
 export default function adminRoutes(db) {
   const router = express.Router();
+
+  const safeSyncStudent = async ({ action, student }) => {
+    try {
+      return await syncStudentToExternalApps({ action, student });
+    } catch (err) {
+      return {
+        ok: false,
+        action,
+        studentId: student?.id ? String(student.id) : null,
+        targets: [
+          {
+            target: "all",
+            status: "failed",
+            message: err?.message || String(err),
+          },
+        ],
+      };
+    }
+  };
+
+  const dangerousActionsEnabled = () =>
+    String(process.env.ADMIN_DANGEROUS_ACTIONS_ENABLED || "false")
+      .trim()
+      .toLowerCase() === "true";
+
+  const blockDangerousAction = (res, actionName) =>
+    res.status(403).json({
+      success: false,
+      error: `${actionName} is blocked by safety policy`,
+      hint: "Set ADMIN_DANGEROUS_ACTIONS_ENABLED=true only after backup verification.",
+    });
 
   // =========================
   // 유틸: JWT 비밀키 확인
@@ -228,6 +264,41 @@ export default function adminRoutes(db) {
   });
 
   // =========================
+  // 학생 동기화 미리보기 (이름 기준)
+  // =========================
+  router.post("/students/sync/preview", verifyToken, async (_req, res) => {
+    try {
+      const sourceStudents = await db.all("SELECT * FROM students ORDER BY id ASC");
+      const preview = await previewStudentNameSync(sourceStudents || []);
+      return res.json({ success: true, preview });
+    } catch (err) {
+      console.error("❌ 학생 동기화 미리보기 오류:", err.message);
+      return res
+        .status(500)
+        .json({ success: false, error: "동기화 미리보기에 실패했습니다." });
+    }
+  });
+
+  // =========================
+  // 학생 동기화 실행 (누락만 추가)
+  // =========================
+  router.post("/students/sync/apply", verifyToken, async (_req, res) => {
+    try {
+      const sourceStudents = await db.all("SELECT * FROM students ORDER BY id ASC");
+      const result = await applyStudentNameSync(sourceStudents || []);
+      return res.json({
+        success: Boolean(result?.ok),
+        result,
+      });
+    } catch (err) {
+      console.error("❌ 학생 동기화 실행 오류:", err.message);
+      return res
+        .status(500)
+        .json({ success: false, error: "동기화 실행에 실패했습니다." });
+    }
+  });
+
+  // =========================
   // 학생 등록
   // =========================
   router.post("/students", verifyToken, async (req, res) => {
@@ -256,7 +327,18 @@ export default function adminRoutes(db) {
         [id, name, grade || "", studentPhone || "", parentPhone || ""]
       );
 
-      res.json({ success: true, message: "학생 등록 완료", studentId: id });
+      const sync = await safeSyncStudent({
+        action: "upsert",
+        student: {
+          id,
+          name: String(name || "").trim(),
+          grade: grade || "",
+          studentPhone: studentPhone || "",
+          parentPhone: parentPhone || "",
+        },
+      });
+
+      res.json({ success: true, message: "학생 등록 완료", studentId: id, sync });
     } catch (err) {
       console.error("❌ 학생 등록 오류:", err.message);
       res.status(500).json({ error: "학생 등록 실패", details: err.message });
@@ -268,12 +350,27 @@ export default function adminRoutes(db) {
   // =========================
   router.delete("/students/:id", verifyToken, async (req, res) => {
     try {
+      if (!dangerousActionsEnabled()) {
+        return blockDangerousAction(res, "student delete");
+      }
+
       const studentId = req.params.id;
+      const existing = await db.get("SELECT * FROM students WHERE id = ?", [
+        studentId,
+      ]);
+      if (!existing) {
+        return res.status(404).json({ error: "student not found" });
+      }
 
       await db.run("DELETE FROM students WHERE id = ?", [studentId]);
       await db.run("DELETE FROM schedules WHERE student_id = ?", [studentId]);
 
-      res.json({ success: true, message: "학생 삭제 완료" });
+      const sync = await safeSyncStudent({
+        action: "remove",
+        student: existing || { id: studentId, name: "" },
+      });
+
+      res.json({ success: true, message: "학생 삭제 완료", sync });
     } catch (err) {
       console.error("❌ 학생 삭제 오류:", err.message);
       res.status(500).json({ error: "학생 삭제 실패" });
@@ -301,7 +398,23 @@ export default function adminRoutes(db) {
       );
 
       const updated = await db.get("SELECT * FROM students WHERE id = ?", [id]);
-      return res.json({ success: true, message: "학생 정보 수정 완료", student: updated });
+      const sync = await safeSyncStudent({
+        action: "upsert",
+        student: updated || {
+          id,
+          name: String(name || "").trim(),
+          grade: grade || "",
+          studentPhone: studentPhone || "",
+          parentPhone: parentPhone || "",
+        },
+      });
+
+      return res.json({
+        success: true,
+        message: "학생 정보 수정 완료",
+        student: updated,
+        sync,
+      });
     } catch (err) {
       console.error("❌ 학생 수정 오류:", err.message);
       res.status(500).json({ error: "학생 수정 실패", details: err.message });
@@ -392,6 +505,9 @@ export default function adminRoutes(db) {
   // =========================
   router.delete("/schedules/clearAll", verifyToken, async (req, res) => {
     try {
+      if (!dangerousActionsEnabled()) {
+        return blockDangerousAction(res, "schedule clear-all");
+      }
       console.log("⚠️ 관리자 전체 일정 삭제 요청 수신됨");
 
       await db.run("DELETE FROM schedules");
