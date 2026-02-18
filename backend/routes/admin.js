@@ -16,9 +16,9 @@ const { sendSMS } = pkg;
 export default function adminRoutes(db) {
   const router = express.Router();
 
-  const safeSyncStudent = async ({ action, student }) => {
+  const safeSyncStudent = async ({ action, student, forceDelete = false }) => {
     try {
-      return await syncStudentToExternalApps({ action, student });
+      return await syncStudentToExternalApps({ action, student, forceDelete });
     } catch (err) {
       return {
         ok: false,
@@ -350,10 +350,6 @@ export default function adminRoutes(db) {
   // =========================
   router.delete("/students/:id", verifyToken, async (req, res) => {
     try {
-      if (!dangerousActionsEnabled()) {
-        return blockDangerousAction(res, "student delete");
-      }
-
       const studentId = req.params.id;
       const existing = await db.get("SELECT * FROM students WHERE id = ?", [
         studentId,
@@ -367,6 +363,7 @@ export default function adminRoutes(db) {
 
       const sync = await safeSyncStudent({
         action: "remove",
+        forceDelete: true,
         student: existing || { id: studentId, name: "" },
       });
 

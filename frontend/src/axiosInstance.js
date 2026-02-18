@@ -98,8 +98,8 @@ axiosInstance.interceptors.response.use(
       );
     }
 
-    // 401/403: 관리자 보호 구역에서만 로그인으로 보냄
-    if ((status === 401 || status === 403) && isAdminArea()) {
+    // 401: 관리자 보호 구역에서만 로그인으로 보냄
+    if (status === 401 && isAdminArea()) {
       try {
         // 필요하면 주석 해제하여 자동 로그아웃
         // localStorage.removeItem("adminToken");

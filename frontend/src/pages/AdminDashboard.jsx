@@ -33,7 +33,7 @@ function useSafeJSON(navigate) {
         // eslint-disable-next-line no-console
         console.error("[AdminDashboard] HTML response from API:", err?.config?.url);
       }
-      if (status === 401 || status === 403) {
+      if (status === 401) {
         try {
           localStorage.removeItem("adminToken");
         } catch {}
@@ -374,7 +374,7 @@ export default function AdminDashboard() {
         } catch (err) {
           console.error("❌ 데이터 로드 실패:", err);
           const code = err?.response?.status;
-          if (code === 401 || code === 403) {
+          if (code === 401) {
             alert("인증이 만료되었습니다. 다시 로그인하세요.");
             try {
               localStorage.removeItem("adminToken");
@@ -1087,7 +1087,7 @@ export default function AdminDashboard() {
       } catch (err) {
         console.error("❌ 최신화 실패:", err);
         const code = err?.response?.status;
-        if (code === 401 || code === 403) {
+        if (code === 401) {
           alert("세션이 만료되었습니다. 다시 로그인하세요.");
           try {
             localStorage.removeItem("adminToken");
