@@ -52,7 +52,7 @@ const isAdminArea = () => {
   return /^\/admin(\/|$)/.test(p) && p !== "/admin-login";
 };
 
-// ✅ 응답 인터셉터: 1) HTML 응답 감지, 2) 401/403 → /admin-login 리다이렉트
+// ✅ 응답 인터셉터: 1) HTML 응답 감지, 2) 401 → /admin-login 리다이렉트
 axiosInstance.interceptors.response.use(
   (response) => {
     // 응답 가드: JSON 대신 HTML이 오면 경고 찍기(프록시/리라이트 문제 힌트)
@@ -98,8 +98,8 @@ axiosInstance.interceptors.response.use(
       );
     }
 
-    // 401/403: 관리자 보호 구역에서만 로그인으로 보냄
-    if ((status === 401 || status === 403) && isAdminArea()) {
+    // 401: 관리자 보호 구역에서만 로그인으로 보냄
+    if (status === 401 && isAdminArea()) {
       try {
         // 필요하면 주석 해제하여 자동 로그아웃
         // localStorage.removeItem("adminToken");

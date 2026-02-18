@@ -15,44 +15,6 @@ function toPhone(value) {
   return String(value || "").trim();
 }
 
-function normalizeNameKey(name) {
-  return String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-function findByIdOrUniqueName(rows, { id, name, getId, getName }) {
-  const safeRows = Array.isArray(rows) ? rows : [];
-  const wantedId = String(id || "").trim();
-
-  if (wantedId) {
-    const byId = safeRows.find(
-      (row) => String(getId?.(row) || "").trim() === wantedId
-    );
-    if (byId) {
-      return { match: byId, strategy: "id" };
-    }
-  }
-
-  const nameKey = normalizeNameKey(name);
-  if (!nameKey) {
-    return { match: null, strategy: "none", reason: "student name missing" };
-  }
-
-  const byName = safeRows.filter(
-    (row) => normalizeNameKey(getName?.(row)) === nameKey
-  );
-  if (byName.length === 1) {
-    return { match: byName[0], strategy: "name" };
-  }
-  if (byName.length > 1) {
-    return {
-      match: null,
-      strategy: "name-ambiguous",
-      reason: `multiple students matched by name (${byName.length})`,
-    };
-  }
-  return { match: null, strategy: "none", reason: "student not found on target" };
-}
-
 function normalizeStudent(student) {
   return {
     id: String(student?.id ?? "").trim(),
@@ -116,10 +78,11 @@ function deleteBlockReason() {
   return "delete sync skipped by policy";
 }
 
-function canHardDelete() {
+function canHardDelete(forceDelete = false) {
   return (
-    deleteMode() === "hard" &&
-    parseBoolEnv(process.env.STUDENT_SYNC_ALLOW_DELETE, false)
+    forceDelete ||
+    (deleteMode() === "hard" &&
+      parseBoolEnv(process.env.STUDENT_SYNC_ALLOW_DELETE, false))
   );
 }
 
@@ -140,10 +103,11 @@ async function doRequest(config) {
   });
 }
 
-async function syncDosirak(action, student) {
+async function syncDosirak(action, student, options = {}) {
   const baseUrl = process.env.SYNC_DOSIRAK_BASE_URL;
   const username = process.env.SYNC_DOSIRAK_ADMIN_USER;
   const password = process.env.SYNC_DOSIRAK_ADMIN_PASS;
+  const forceDelete = Boolean(options?.forceDelete);
 
   if (!normalizeBaseUrl(baseUrl)) {
     return result("dosirak", "skipped", "SYNC_DOSIRAK_BASE_URL not configured");
@@ -155,7 +119,7 @@ async function syncDosirak(action, student) {
       "SYNC_DOSIRAK_ADMIN_USER/PASS not configured"
     );
   }
-  if (action !== "upsert" && !canHardDelete()) {
+  if (action !== "upsert" && !canHardDelete(forceDelete)) {
     return result("dosirak", "skipped", deleteBlockReason());
   }
 
@@ -194,36 +158,28 @@ async function syncDosirak(action, student) {
     headers: { Cookie: cookieHeader },
   });
   const rows = Array.isArray(listRes?.data) ? listRes.data : [];
-  const lookup = findByIdOrUniqueName(rows, {
-    id: student.id,
-    name: student.name,
-    getId: (r) => r?.code,
-    getName: (r) => r?.name,
-  });
-  if (!lookup.match?.id) {
-    return result("dosirak", "skipped", lookup.reason || "student not found on target");
+  const target = rows.find(
+    (r) => String(r?.code ?? "").trim() === String(student.id).trim()
+  );
+  if (!target?.id) {
+    return result("dosirak", "skipped", "student id not found on target");
   }
 
   await doRequest({
     method: "delete",
-    url: apiUrl(baseUrl, `/admin/students/${lookup.match.id}`),
+    url: apiUrl(baseUrl, `/admin/students/${target.id}`),
     headers: { Cookie: cookieHeader },
   });
-  return result(
-    "dosirak",
-    "success",
-    lookup.strategy === "name"
-      ? "student deleted on target (name fallback)"
-      : "student deleted on target"
-  );
+  return result("dosirak", "success", "student deleted on target");
 }
 
-async function syncPenalty(action, student) {
+async function syncPenalty(action, student, options = {}) {
   const baseUrl = process.env.SYNC_PENALTY_BASE_URL;
+  const forceDelete = Boolean(options?.forceDelete);
   if (!normalizeBaseUrl(baseUrl)) {
     return result("penalty", "skipped", "SYNC_PENALTY_BASE_URL not configured");
   }
-  if (action !== "upsert" && !canHardDelete()) {
+  if (action !== "upsert" && !canHardDelete(forceDelete)) {
     return result("penalty", "skipped", deleteBlockReason());
   }
 
@@ -247,34 +203,26 @@ async function syncPenalty(action, student) {
     url: apiUrl(baseUrl, "/students"),
   });
   const rows = Array.isArray(listRes?.data?.data) ? listRes.data.data : [];
-  const lookup = findByIdOrUniqueName(rows, {
-    id: student.id,
-    name: student.name,
-    getId: (r) => r?.id,
-    getName: (r) => r?.name,
-  });
-  const targetId = String(lookup.match?.id || "").trim();
+  const target = rows.find(
+    (r) => String(r?.id ?? "").trim() === String(student.id).trim()
+  );
+  const targetId = String(target?.id || "").trim();
   if (!targetId) {
-    return result("penalty", "skipped", lookup.reason || "student not found on target");
+    return result("penalty", "skipped", "student id not found on target");
   }
 
   await doRequest({
     method: "delete",
     url: apiUrl(baseUrl, `/students/${encodeURIComponent(targetId)}`),
   });
-  return result(
-    "penalty",
-    "success",
-    lookup.strategy === "name"
-      ? "student deleted on target (name fallback)"
-      : "student deleted on target"
-  );
+  return result("penalty", "success", "student deleted on target");
 }
 
-async function syncMentoring(action, student) {
+async function syncMentoring(action, student, options = {}) {
   const baseUrl = process.env.SYNC_MENTORING_BASE_URL;
   const username = process.env.SYNC_MENTORING_USERNAME;
   const password = process.env.SYNC_MENTORING_PASSWORD;
+  const forceDelete = Boolean(options?.forceDelete);
 
   if (!normalizeBaseUrl(baseUrl)) {
     return result(
@@ -290,7 +238,7 @@ async function syncMentoring(action, student) {
       "SYNC_MENTORING_USERNAME/PASSWORD not configured"
     );
   }
-  if (action !== "upsert" && !canHardDelete()) {
+  if (action !== "upsert" && !canHardDelete(forceDelete)) {
     return result("mentoring", "skipped", deleteBlockReason());
   }
 
@@ -343,28 +291,16 @@ async function syncMentoring(action, student) {
     return result("mentoring", "success", "student upsert synced");
   }
 
-  const lookup = findByIdOrUniqueName(rows, {
-    id: student.id,
-    name: student.name,
-    getId: (r) => r?.external_id,
-    getName: (r) => r?.name,
-  });
-  if (!lookup.match?.id) {
-    return result("mentoring", "skipped", lookup.reason || "student not found on target");
+  if (!existing?.id) {
+    return result("mentoring", "skipped", "student id not found on target");
   }
 
   await doRequest({
     method: "delete",
-    url: apiUrl(baseUrl, `/students/${lookup.match.id}`),
+    url: apiUrl(baseUrl, `/students/${existing.id}`),
     headers: authHeaders,
   });
-  return result(
-    "mentoring",
-    "success",
-    lookup.strategy === "name"
-      ? "student deleted on target (name fallback)"
-      : "student deleted on target"
-  );
+  return result("mentoring", "success", "student deleted on target");
 }
 
 function mergeLegacyStudent(existing, student) {
@@ -378,10 +314,11 @@ function mergeLegacyStudent(existing, student) {
   };
 }
 
-async function syncLegacyState(action, student) {
+async function syncLegacyState(action, student, options = {}) {
   const baseUrl = process.env.SYNC_LEGACY_BASE_URL;
   const username = process.env.SYNC_LEGACY_USERNAME;
   const password = process.env.SYNC_LEGACY_PASSWORD;
+  const forceDelete = Boolean(options?.forceDelete);
 
   if (!normalizeBaseUrl(baseUrl)) {
     return result("legacy-state", "skipped", "SYNC_LEGACY_BASE_URL not configured");
@@ -393,7 +330,7 @@ async function syncLegacyState(action, student) {
       "SYNC_LEGACY_USERNAME/PASSWORD not configured"
     );
   }
-  if (action !== "upsert" && !canHardDelete()) {
+  if (action !== "upsert" && !canHardDelete(forceDelete)) {
     return result("legacy-state", "skipped", deleteBlockReason());
   }
 
@@ -418,16 +355,10 @@ async function syncLegacyState(action, student) {
     : {};
   const students = Array.isArray(state.students) ? [...state.students] : [];
 
-  const lookup = findByIdOrUniqueName(students, {
-    id: student.id,
-    name: student.name,
-    getId: (r) => r?.id,
-    getName: (r) => r?.name,
-  });
-  const matchId = String(lookup.match?.id || "").trim();
-  const idx = matchId
-    ? students.findIndex((r) => String(r?.id ?? "").trim() === matchId)
-    : -1;
+  const matchId = String(student.id || "").trim();
+  const idx = students.findIndex(
+    (r) => String(r?.id ?? "").trim() === matchId
+  );
   let nextStudents = students;
 
   if (action === "upsert") {
@@ -447,17 +378,11 @@ async function syncLegacyState(action, student) {
         },
       ];
     }
-  } else if (canHardDelete()) {
-    if (!matchId) {
-      return result("legacy-state", "skipped", lookup.reason || "student not found on target");
+  } else {
+    if (idx < 0) {
+      return result("legacy-state", "skipped", "student id not found on target");
     }
     nextStudents = students.filter((r) => String(r?.id ?? "").trim() !== matchId);
-  } else {
-    return result(
-      "legacy-state",
-      "skipped",
-      deleteBlockReason()
-    );
   }
 
   const changed =
@@ -489,7 +414,11 @@ async function runTarget(handler, name) {
   }
 }
 
-export async function syncStudentToExternalApps({ action, student }) {
+export async function syncStudentToExternalApps({
+  action,
+  student,
+  forceDelete = false,
+}) {
   if (!syncEnabled()) {
     return {
       ok: true,
@@ -517,22 +446,23 @@ export async function syncStudentToExternalApps({ action, student }) {
       targets: [result("all", "failed", "student.name is required for upsert")],
     };
   }
+  const syncOptions = { forceDelete: Boolean(forceDelete) };
 
   const targets = await Promise.all([
     runTarget(
-      () => syncDosirak(normalizedAction, normalizedStudent),
+      () => syncDosirak(normalizedAction, normalizedStudent, syncOptions),
       "dosirak"
     ),
     runTarget(
-      () => syncMentoring(normalizedAction, normalizedStudent),
+      () => syncMentoring(normalizedAction, normalizedStudent, syncOptions),
       "mentoring"
     ),
     runTarget(
-      () => syncPenalty(normalizedAction, normalizedStudent),
+      () => syncPenalty(normalizedAction, normalizedStudent, syncOptions),
       "penalty"
     ),
     runTarget(
-      () => syncLegacyState(normalizedAction, normalizedStudent),
+      () => syncLegacyState(normalizedAction, normalizedStudent, syncOptions),
       "legacy-state"
     ),
   ]);
