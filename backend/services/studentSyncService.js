@@ -198,24 +198,23 @@ async function syncPenalty(action, student, options = {}) {
     return result("penalty", "success", "student upsert synced");
   }
 
-  const listRes = await doRequest({
-    method: "get",
-    url: apiUrl(baseUrl, "/students"),
-  });
-  const rows = Array.isArray(listRes?.data?.data) ? listRes.data.data : [];
-  const target = rows.find(
-    (r) => String(r?.id ?? "").trim() === String(student.id).trim()
-  );
-  const targetId = String(target?.id || "").trim();
+  const targetId = String(student.id || "").trim();
   if (!targetId) {
-    return result("penalty", "skipped", "student id not found on target");
+    return result("penalty", "failed", "student.id is required for delete");
   }
 
-  await doRequest({
-    method: "delete",
-    url: apiUrl(baseUrl, `/students/${encodeURIComponent(targetId)}`),
-  });
-  return result("penalty", "success", "student deleted on target");
+  try {
+    await doRequest({
+      method: "delete",
+      url: apiUrl(baseUrl, `/students/${encodeURIComponent(targetId)}`),
+    });
+    return result("penalty", "success", "student deleted on target");
+  } catch (err) {
+    if (Number(err?.response?.status) === 404) {
+      return result("penalty", "skipped", "student id not found on target");
+    }
+    throw err;
+  }
 }
 
 async function syncMentoring(action, student, options = {}) {
