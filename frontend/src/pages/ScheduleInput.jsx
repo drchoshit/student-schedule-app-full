@@ -81,10 +81,29 @@ export default function ScheduleInput() {
   }, [weekStart]);
   const formatMD = (date) => `${date.getMonth() + 1}/${date.getDate()}`;
 
-  // 학생 세션
+  // 학생 세션 (관리자 바로가기 쿼리 파라미터 우선)
   const student = useMemo(() => {
-    const stored = localStorage.getItem("student");
-    return stored ? JSON.parse(stored) : null;
+    try {
+      const qs = new URLSearchParams(window.location.search || "");
+      const adminStudentId = (qs.get("adminStudentId") || "").trim();
+      const adminStudentName = (qs.get("adminStudentName") || "").trim();
+      const hasAdminToken = Boolean(localStorage.getItem("adminToken"));
+
+      if (hasAdminToken && adminStudentId) {
+        return {
+          id: adminStudentId,
+          name: adminStudentName || adminStudentId,
+          grade: "",
+          studentPhone: "",
+          parentPhone: "",
+        };
+      }
+
+      const stored = localStorage.getItem("student");
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
   }, []);
 
   // 설정(상단 안내문 등)

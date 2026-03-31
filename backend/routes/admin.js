@@ -73,6 +73,11 @@ export default function adminRoutes(db) {
     return `${y}-${m}-${da}`;
   };
 
+  const normalizeWeekStart = (value) => {
+    const s = String(value || "").trim().slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+  };
+
   // =========================
   // 스케줄 조회 (관리자)
   // =========================
@@ -494,6 +499,180 @@ export default function adminRoutes(db) {
     } catch (err) {
       console.error("❌ 학생 + 일정 불러오기 실패:", err.message);
       res.status(500).json({ error: "학생 + 일정 불러오기 실패" });
+    }
+  });
+
+  // =========================
+  // 학생별 지난주 일정 존재 여부 요약
+  // =========================
+  router.get("/schedules/previous-summary", async (req, res) => {
+    try {
+      const targetWeek =
+        normalizeWeekStart(req.query?.weekStart) ||
+        getWeekStartMondayStr(new Date());
+
+      const rows = await db.all(
+        `
+        SELECT
+          st.id AS student_id,
+          CASE
+            WHEN EXISTS (
+              SELECT 1
+              FROM schedules cur
+              WHERE cur.student_id = st.id
+                AND cur.week_start = ?
+            ) THEN 1 ELSE 0
+          END AS has_current,
+          (
+            SELECT MAX(prev.week_start)
+            FROM schedules prev
+            WHERE prev.student_id = st.id
+              AND prev.week_start < ?
+          ) AS previous_week_start
+        FROM students st
+        ORDER BY st.id ASC
+        `,
+        [targetWeek, targetWeek]
+      );
+
+      const result = (rows || []).map((r) => ({
+        student_id: String(r?.student_id || ""),
+        hasCurrent: Number(r?.has_current || 0) === 1,
+        fromWeek: String(r?.previous_week_start || ""),
+      }));
+
+      return res.json(result);
+    } catch (err) {
+      console.error("previous-summary error:", err?.message || err);
+      return res.status(500).json({ error: "지난주 일정 요약 조회 실패" });
+    }
+  });
+
+  // =========================
+  // 학생별 지난주 일정 복사
+  // =========================
+  router.post("/schedules/copy-previous-for-student", async (req, res) => {
+    const studentId = String(req.body?.studentId || "").trim();
+    const toWeekStart =
+      normalizeWeekStart(req.body?.toWeekStart || req.body?.weekStart) ||
+      getWeekStartMondayStr(new Date());
+    const requestedFromWeek = normalizeWeekStart(req.body?.fromWeekStart);
+
+    if (!studentId) {
+      return res.status(400).json({ error: "studentId is required" });
+    }
+
+    try {
+      const existsStudent = await db.get(
+        "SELECT id, name FROM students WHERE id = ?",
+        [studentId]
+      );
+      if (!existsStudent) {
+        return res.status(404).json({ error: "student not found" });
+      }
+
+      const currentCountRow = await db.get(
+        "SELECT COUNT(*) AS cnt FROM schedules WHERE student_id = ? AND week_start = ?",
+        [studentId, toWeekStart]
+      );
+      const currentCount = Number(currentCountRow?.cnt || 0);
+      if (currentCount > 0) {
+        return res.json({
+          success: true,
+          copied: 0,
+          skipped: true,
+          reason: "current_week_exists",
+          message: "이미 이번 주 일정이 있어 복사하지 않았습니다.",
+          toWeek: toWeekStart,
+        });
+      }
+
+      let fromWeek = requestedFromWeek;
+      if (!fromWeek) {
+        const prevWeekRow = await db.get(
+          `
+          SELECT MAX(week_start) AS week_start
+          FROM schedules
+          WHERE student_id = ?
+            AND week_start < ?
+          `,
+          [studentId, toWeekStart]
+        );
+        fromWeek = String(prevWeekRow?.week_start || "");
+      }
+
+      if (!fromWeek) {
+        return res.status(404).json({
+          success: false,
+          error: "NO_PREVIOUS_WEEK",
+          message: "복사할 지난주 일정이 없습니다.",
+        });
+      }
+
+      const prevRows = await db.all(
+        `
+        SELECT student_id, student_code, day, start, end, type, description
+        FROM schedules
+        WHERE student_id = ?
+          AND week_start = ?
+        ORDER BY day, start
+        `,
+        [studentId, fromWeek]
+      );
+
+      if (!prevRows || prevRows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: "NO_PREVIOUS_SCHEDULE_ROWS",
+          message: "복사할 지난주 일정 상세가 없습니다.",
+        });
+      }
+
+      const savedAt = new Date().toISOString();
+
+      await db.exec("BEGIN");
+      try {
+        const stmt = await db.prepare(
+          `
+          INSERT INTO schedules
+            (student_id, student_code, day, start, end, type, description, week_start, saved_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `
+        );
+
+        for (const row of prevRows) {
+          await stmt.run([
+            studentId,
+            row?.student_code || studentId,
+            row?.day || "",
+            row?.start || "",
+            row?.end || "",
+            row?.type || "",
+            row?.description || "",
+            toWeekStart,
+            savedAt,
+          ]);
+        }
+
+        await stmt.finalize();
+        await db.exec("COMMIT");
+      } catch (txErr) {
+        try {
+          await db.exec("ROLLBACK");
+        } catch {}
+        throw txErr;
+      }
+
+      return res.json({
+        success: true,
+        copied: prevRows.length,
+        fromWeek,
+        toWeek: toWeekStart,
+        student_id: studentId,
+      });
+    } catch (err) {
+      console.error("copy-previous-for-student error:", err?.message || err);
+      return res.status(500).json({ error: "지난주 일정 복사 실패" });
     }
   });
 

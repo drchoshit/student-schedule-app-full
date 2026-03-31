@@ -46,6 +46,18 @@ function useSafeJSON(navigate) {
 
 const arr = (v) => (Array.isArray(v) ? v : []);
 const obj = (v) => (v && typeof v === "object" ? v : {});
+const buildPreviousWeekLookup = (rows) => {
+  const map = {};
+  for (const row of arr(rows)) {
+    const sid = String(row?.student_id ?? "");
+    if (!sid) continue;
+    map[sid] = {
+      hasCurrent: Boolean(row?.hasCurrent ?? row?.has_current ?? false),
+      fromWeek: String(row?.fromWeek ?? row?.previous_week_start ?? ""),
+    };
+  }
+  return map;
+};
 
 // ───────────────────────────────────────────
 // 최신 제출만 남기기 + 강력 중복 제거 유틸
@@ -153,6 +165,8 @@ export default function AdminDashboard() {
   const [students, setStudents] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [studentSchedules, setStudentSchedules] = useState([]);
+  const [previousWeekByStudent, setPreviousWeekByStudent] = useState({});
+  const [copyingStudentId, setCopyingStudentId] = useState("");
   const [loading, setLoading] = useState(true);
 
   const [settings, setSettings] = useState({
@@ -289,10 +303,15 @@ export default function AdminDashboard() {
           console.log("📅 관리자 설정 주차 기반 weekStart =", weekStart);
 
           // 2️⃣ 해당 주차로 학생 + 일정 데이터 요청
-          const [studentsData, schedulesData] = await Promise.all([
+          const [studentsData, schedulesData, previousSummaryData] = await Promise.all([
             safeJSON(axiosInstance.get(`/admin/students`, { params: { _t: Date.now() } })),
             safeJSON(
               axiosInstance.get(`/admin/schedules`, {
+                params: { weekStart, _t: Date.now() },
+              })
+            ),
+            safeJSON(
+              axiosInstance.get(`/admin/schedules/previous-summary`, {
                 params: { weekStart, _t: Date.now() },
               })
             ),
@@ -310,6 +329,7 @@ export default function AdminDashboard() {
           setSettings(newSettings);
           setStudents(newStudents);
           setSchedules(newSchedules);
+          setPreviousWeekByStudent(buildPreviousWeekLookup(previousSummaryData));
 
           // 4️⃣ 학생별 요약 및 로컬스토리지 반영
           const byStudent = new Map();
@@ -1033,10 +1053,15 @@ export default function AdminDashboard() {
         console.log("🔁 최신화 버튼 기준 주차 =", weekStart);
 
         // 2️⃣ 주차 기준으로 학생 + 일정 데이터를 다시 요청
-        const [studentsData, schedulesData] = await Promise.all([
+        const [studentsData, schedulesData, previousSummaryData] = await Promise.all([
           safeJSON(axiosInstance.get(`/admin/students`, { params: { _t: Date.now() } })),
           safeJSON(
             axiosInstance.get(`/admin/schedules`, {
+              params: { weekStart, _t: Date.now() },
+            })
+          ),
+          safeJSON(
+            axiosInstance.get(`/admin/schedules/previous-summary`, {
               params: { weekStart, _t: Date.now() },
             })
           ),
@@ -1053,6 +1078,29 @@ export default function AdminDashboard() {
         setStudents(newStudents);
         setSchedules(newSchedules);
         setSettings(settingsData);
+        setPreviousWeekByStudent(buildPreviousWeekLookup(previousSummaryData));
+
+        const byStudent = new Map();
+        for (const s of newSchedules) {
+          const list = byStudent.get(s.student_id) || [];
+          list.push({
+            day: s.day,
+            start: s.start,
+            end: s.end,
+            type: s.type,
+            description: s.description || "",
+          });
+          byStudent.set(s.student_id, list);
+        }
+        const nextStudentSchedules = newStudents.map((stu) => ({
+          id: stu.id,
+          completed: (byStudent.get(stu.id)?.length || 0) > 0,
+          schedule: byStudent.get(stu.id) || [],
+        }));
+        setStudentSchedules(nextStudentSchedules);
+        try {
+          localStorage.setItem("studentSchedules", JSON.stringify(nextStudentSchedules));
+        } catch {}
 
         // 4️⃣ 최근 72시간 내 제출 학생 요약
         const cutoff = Date.now() - 72 * 60 * 60 * 1000; // 72시간
@@ -1100,6 +1148,102 @@ export default function AdminDashboard() {
     };
 
   // 파일 내보내기/가져오기 (⚠️ 초기 렌더 안전 버전)
+  const refreshWeekSchedulesOnly = async () => {
+    const weekStart = weekStartFromRangeText(settings?.week_range_text);
+    const [schedulesData, previousSummaryData] = await Promise.all([
+      safeJSON(
+        axiosInstance.get(`/admin/schedules`, {
+          params: { weekStart, _t: Date.now() },
+        })
+      ),
+      safeJSON(
+        axiosInstance.get(`/admin/schedules/previous-summary`, {
+          params: { weekStart, _t: Date.now() },
+        })
+      ),
+    ]);
+
+    const newSchedulesRaw = arr(schedulesData).map((x) => ({
+      ...x,
+      type: normalizeType(x?.type),
+    }));
+    const newSchedules = filterToLatestSchedules(newSchedulesRaw);
+    setSchedules(newSchedules);
+    setPreviousWeekByStudent(buildPreviousWeekLookup(previousSummaryData));
+
+    const byStudent = new Map();
+    for (const s of newSchedules) {
+      const list = byStudent.get(s.student_id) || [];
+      list.push({
+        day: s.day,
+        start: s.start,
+        end: s.end,
+        type: s.type,
+        description: s.description || "",
+      });
+      byStudent.set(s.student_id, list);
+    }
+    const nextStudentSchedules = students.map((stu) => ({
+      id: stu.id,
+      completed: (byStudent.get(stu.id)?.length || 0) > 0,
+      schedule: byStudent.get(stu.id) || [],
+    }));
+    setStudentSchedules(nextStudentSchedules);
+    try {
+      localStorage.setItem("studentSchedules", JSON.stringify(nextStudentSchedules));
+      localStorage.setItem("currentWeekStart", weekStart || "");
+    } catch {}
+  };
+
+  const handleCopyFromPreviousWeek = async (studentId) => {
+    const sid = String(studentId || "").trim();
+    if (!sid) return;
+
+    const info = previousWeekByStudent?.[sid];
+    if (!info?.fromWeek) {
+      alert("복사할 지난주 일정이 없습니다. 학생 입력 페이지로 직접 입력해주세요.");
+      return;
+    }
+
+    const weekStart = weekStartFromRangeText(settings?.week_range_text);
+
+    try {
+      setCopyingStudentId(sid);
+      const data = await safeJSON(
+        axiosInstance.post(`/admin/schedules/copy-previous-for-student`, {
+          studentId: sid,
+          toWeekStart: weekStart,
+          fromWeekStart: info.fromWeek,
+        })
+      );
+
+      if (data?.copied > 0) {
+        alert(`지난주(${data.fromWeek}) 일정 ${data.copied}건을 복사했습니다.`);
+      } else {
+        alert(data?.message || "복사할 일정이 없거나 이미 이번 주 일정이 존재합니다.");
+      }
+
+      await refreshWeekSchedulesOnly();
+    } catch (err) {
+      console.error("지난주 일정 복사 실패:", err);
+      const msg = err?.response?.data?.message || err?.response?.data?.error || err?.message;
+      alert(`지난주 일정 복사 실패: ${msg}`);
+    } finally {
+      setCopyingStudentId("");
+    }
+  };
+
+  const openStudentInputShortcut = (student) => {
+    const id = String(student?.id || "").trim();
+    if (!id) return;
+    const name = String(student?.name || "").trim();
+    const qs = new URLSearchParams({
+      adminStudentId: id,
+      adminStudentName: name || id,
+    }).toString();
+    window.open(`/schedule?${qs}`, "_blank", "noopener,noreferrer");
+  };
+
   const buildFilenamePrefix = (base) => {
     const raw = settings?.week_range_text;
 
@@ -1581,11 +1725,22 @@ export default function AdminDashboard() {
     return labels;
   }
 
-  function CenterSummaryTable({ students, schedules, weekRangeText }) {
+  function CenterSummaryTable({
+    students,
+    schedules,
+    weekRangeText,
+    previousWeekByStudent,
+    onCopyFromPreviousWeek,
+    onOpenStudentInput,
+    copyingStudentId,
+  }) {
     const rowsLegacy = buildCenterSummaryRows(students, schedules);
     const { rows, absentSet } = buildCenterAggWithAbsent(students, schedules);
     const dateLabels = getWeekDateLabels(weekRangeText);
-    const SHOW_MANUAL_ABSENT_BUTTON = false;
+    const sourceRows = safeArray(rows.length ? rows : rowsLegacy);
+    const currentStudentSet = new Set(
+      safeArray(filterToLatestSchedules(schedules)).map((x) => String(x?.student_id ?? ""))
+    );
 
     return (
       <div className="overflow-auto">
@@ -1600,43 +1755,68 @@ export default function AdminDashboard() {
                   {dateLabels[idx] ? `(${dateLabels[idx]})` : ""}
                 </th>
               ))}
+              <th className="border px-2 py-1 w-56">보정/입력</th>
             </tr>
           </thead>
           <tbody>
-            {safeArray(rows.length ? rows : rowsLegacy).map((r) => (
-              <tr key={r.id || Math.random()} className="text-center align-top">
-                <td className="border px-2 py-1">{r.id}</td>
-                <td className="border px-2 py-1">{r.name}</td>
-                {DAY_ORDER.map((d) => {
-                  const isAbsentAuto =
-                    r[d] === "미등원" || absentSet.has(`${r.id}::${d}`);
-                  const cellText = r[d] || "";
-                  return (
-                    <td key={d} className="border px-2 py-1">
-                      <div
-                        className={`min-h-[2.25rem] ${
-                          isAbsentAuto ? "text-red-600 font-semibold" : ""
-                        }`}
-                      >
-                        {isAbsentAuto ? "미등원" : cellText || <span className="text-gray-400">—</span>}
+            {sourceRows.map((r) => {
+              const sid = String(r?.id || "");
+              const hasCurrent = currentStudentSet.has(sid);
+              const previousInfo = previousWeekByStudent?.[sid];
+              const hasPrevious = Boolean(previousInfo?.fromWeek);
+
+              return (
+                <tr key={r.id || Math.random()} className="text-center align-top">
+                  <td className="border px-2 py-1">{r.id}</td>
+                  <td className="border px-2 py-1">{r.name}</td>
+                  {DAY_ORDER.map((d) => {
+                    const isAbsentAuto =
+                      r[d] === "미등원" || absentSet.has(`${r.id}::${d}`);
+                    const cellText = r[d] || "";
+                    return (
+                      <td key={d} className="border px-2 py-1">
+                        <div
+                          className={`min-h-[2.25rem] ${
+                            isAbsentAuto ? "text-red-600 font-semibold" : ""
+                          }`}
+                        >
+                          {isAbsentAuto ? "미등원" : cellText || <span className="text-gray-400">-</span>}
+                        </div>
+                      </td>
+                    );
+                  })}
+                  <td className="border px-2 py-1">
+                    {hasCurrent ? (
+                      <span className="text-xs text-green-700 font-semibold">이번 주 제출됨</span>
+                    ) : hasPrevious ? (
+                      <div className="flex flex-col items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => onCopyFromPreviousWeek?.(sid)}
+                          disabled={copyingStudentId === sid}
+                          className="px-2 py-1 rounded bg-amber-500 text-white text-xs hover:bg-amber-600 disabled:opacity-60"
+                        >
+                          {copyingStudentId === sid ? "복사 중..." : "지난주 동일 입력"}
+                        </button>
+                        <span className="text-[11px] text-gray-500">{previousInfo?.fromWeek}</span>
                       </div>
+                    ) : (
                       <button
                         type="button"
-                        className={`${SHOW_MANUAL_ABSENT_BUTTON ? "" : "hidden"} mt-1 px-4 py-2 rounded text-sm border`}
-                        title="해당 요일 미등원 표시 (저장 데이터에는 영향 없음)"
+                        onClick={() => onOpenStudentInput?.({ id: sid, name: r?.name || sid })}
+                        className="px-2 py-1 rounded bg-blue-600 text-white text-xs hover:bg-blue-700"
                       >
-                        미등원
+                        학생 입력 페이지 바로가기
                       </button>
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
         <p className="text-xs text-gray-500 mt-2">
-          * 표는 학생이 입력한 <b>센터</b> 시간만 반영됩니다. “미등원”은 학생 입력을 기준으로 자동
-          표시됩니다.
+          * 센터 시간은 학생 입력 데이터 기준입니다. 미제출 학생은 오른쪽 버튼으로 지난주 복사 또는 직접 입력이 가능합니다.
         </p>
       </div>
     );
@@ -2021,6 +2201,10 @@ export default function AdminDashboard() {
           students={students}
           schedules={schedules}
           weekRangeText={settings?.week_range_text || ""}
+          previousWeekByStudent={previousWeekByStudent}
+          onCopyFromPreviousWeek={handleCopyFromPreviousWeek}
+          onOpenStudentInput={openStudentInputShortcut}
+          copyingStudentId={copyingStudentId}
         />
       </div>
 
@@ -2279,3 +2463,4 @@ export default function AdminDashboard() {
     </div>
   );
 }
+
