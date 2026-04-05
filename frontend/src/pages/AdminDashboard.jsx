@@ -1786,29 +1786,32 @@ export default function AdminDashboard() {
                     );
                   })}
                   <td className="border px-2 py-1">
-                    {hasCurrent ? (
-                      <span className="text-xs text-green-700 font-semibold">이번 주 제출됨</span>
-                    ) : hasPrevious ? (
-                      <div className="flex flex-col items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => onCopyFromPreviousWeek?.(sid)}
-                          disabled={copyingStudentId === sid}
-                          className="px-2 py-1 rounded bg-amber-500 text-white text-xs hover:bg-amber-600 disabled:opacity-60"
-                        >
-                          {copyingStudentId === sid ? "복사 중..." : "지난주 동일 입력"}
-                        </button>
-                        <span className="text-[11px] text-gray-500">{previousInfo?.fromWeek}</span>
-                      </div>
-                    ) : (
+                    <div className="flex flex-col items-center gap-1">
+                      {hasCurrent ? (
+                        <span className="text-xs text-green-700 font-semibold">이번 주 제출됨</span>
+                      ) : hasPrevious ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => onCopyFromPreviousWeek?.(sid)}
+                            disabled={copyingStudentId === sid}
+                            className="px-2 py-1 rounded bg-amber-500 text-white text-xs hover:bg-amber-600 disabled:opacity-60"
+                          >
+                            {copyingStudentId === sid ? "복사 중..." : "지난주 동일 입력"}
+                          </button>
+                          <span className="text-[11px] text-gray-500">{previousInfo?.fromWeek}</span>
+                        </>
+                      ) : (
+                        <span className="text-xs text-slate-500">이번 주 미제출</span>
+                      )}
                       <button
                         type="button"
                         onClick={() => onOpenStudentInput?.({ id: sid, name: r?.name || sid })}
                         className="px-2 py-1 rounded bg-blue-600 text-white text-xs hover:bg-blue-700"
                       >
-                        학생 입력 페이지 바로가기
+                        학생 신청페이지 이동
                       </button>
-                    )}
+                    </div>
                   </td>
                 </tr>
               );
