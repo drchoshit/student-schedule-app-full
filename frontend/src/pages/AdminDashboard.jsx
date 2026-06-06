@@ -1875,7 +1875,7 @@ export default function AdminDashboard() {
 
   // UI
   return (
-    <div className="p-4 max-w-6xl mx-auto">
+    <div className="admin-dashboard p-4 max-w-7xl mx-auto">
       {/* 모달 스크롤 전역 보정 */}
       <style>{`
         /* 오버레이가 fixed inset-0 패턴일 때 내부 컨테이너 스크롤 허용 */
@@ -1892,7 +1892,7 @@ export default function AdminDashboard() {
 
       <h1 className="text-2xl font-bold mb-4">관리자 페이지</h1>
 
-      <div className="flex flex-wrap gap-4 mb-3">
+      <div className="admin-toolbar flex flex-wrap gap-4 mb-3">
         <button onClick={() => openCalendar("student")} className="bg-blue-500 text-white px-4 py-2 rounded">
           학생 별 일정표(캘린더)
         </button>
