@@ -1875,7 +1875,7 @@ export default function AdminDashboard() {
 
   // UI
   return (
-    <div className="admin-dashboard p-4 max-w-7xl mx-auto">
+    <div className="admin-dashboard">
       {/* 모달 스크롤 전역 보정 */}
       <style>{`
         /* 오버레이가 fixed inset-0 패턴일 때 내부 컨테이너 스크롤 허용 */
@@ -1890,7 +1890,17 @@ export default function AdminDashboard() {
         }
       `}</style>
 
-      <h1 className="text-2xl font-bold mb-4">관리자 페이지</h1>
+      <div className="admin-hero">
+        <div>
+          <div className="admin-eyebrow">MEDI SCHEDULE</div>
+          <h1>관리자 페이지</h1>
+          <div className="admin-meta">
+            <span>{settings?.week_range_text || "주차 미설정"}</span>
+            <span>학생 {filteredStudents.length}명</span>
+            <span>일정 {schedules.length}개</span>
+          </div>
+        </div>
+      </div>
 
       <div className="admin-toolbar flex flex-wrap gap-4 mb-3">
         <button onClick={() => openCalendar("student")} className="bg-blue-500 text-white px-4 py-2 rounded">

@@ -12,17 +12,61 @@
 @layer components {
   .admin-dashboard {
     min-height: 100vh;
-    padding: 32px clamp(18px, 3vw, 40px);
+    width: min(1480px, calc(100vw - 32px));
+    margin: 0 auto;
+    padding: 34px clamp(16px, 3vw, 42px) 64px !important;
     color: #172033;
     font-feature-settings: "tnum";
   }
 
-  .admin-dashboard h1 {
-    margin-bottom: 22px;
-    color: #0f172a;
-    font-size: clamp(28px, 3vw, 42px);
+  .admin-hero {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 18px;
+    padding: 28px clamp(22px, 3vw, 34px);
+    border: 1px solid rgba(15, 23, 42, 0.12);
+    border-radius: 28px;
+    background: #111827;
+    color: #ffffff;
+    box-shadow: 0 24px 70px rgba(15, 23, 42, 0.22);
+  }
+
+  .admin-eyebrow {
+    margin-bottom: 10px;
+    color: #8dd6c5;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+  }
+
+  .admin-hero h1 {
+    margin: 0;
+    color: #ffffff;
+    font-size: clamp(30px, 3.4vw, 48px);
     font-weight: 800;
     letter-spacing: 0;
+  }
+
+  .admin-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 16px;
+  }
+
+  .admin-meta span {
+    display: inline-flex;
+    align-items: center;
+    min-height: 30px;
+    padding: 5px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #e5eefb;
+    font-size: 13px;
+    font-weight: 700;
   }
 
   .admin-dashboard h2,
@@ -37,11 +81,11 @@
     z-index: 30;
     align-items: center;
     gap: 10px;
-    margin: 0 -8px 24px;
+    margin: 0 0 24px;
     padding: 12px;
     border: 1px solid rgba(226, 232, 240, 0.95);
-    border-radius: 20px;
-    background: rgba(255, 255, 255, 0.9);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.94);
     box-shadow: 0 16px 45px rgba(15, 23, 42, 0.08);
     backdrop-filter: blur(16px);
   }
@@ -52,6 +96,13 @@
     border-radius: 22px !important;
     background: rgba(255, 255, 255, 0.94) !important;
     box-shadow: 0 18px 55px rgba(15, 23, 42, 0.07);
+  }
+
+  .admin-dashboard > div.border h2,
+  .admin-dashboard > div.mb-6.border h2 {
+    margin-bottom: 14px;
+    font-size: 18px;
+    font-weight: 800;
   }
 
   .admin-dashboard > div.bg-amber-50 {
@@ -150,16 +201,16 @@
   .admin-dashboard table {
     width: 100%;
     overflow: hidden;
-    border: 1px solid #e2e8f0 !important;
+    border: 1px solid #dde6f1 !important;
     border-collapse: separate !important;
     border-spacing: 0;
     border-radius: 18px;
     background: #ffffff;
-    box-shadow: 0 12px 34px rgba(15, 23, 42, 0.05);
+    box-shadow: 0 18px 46px rgba(15, 23, 42, 0.06);
   }
 
   .admin-dashboard thead tr {
-    background: #f1f5f9 !important;
+    background: #eef4fb !important;
   }
 
   .admin-dashboard th {
@@ -204,7 +255,13 @@
 
   @media (max-width: 760px) {
     .admin-dashboard {
-      padding: 20px 14px;
+      width: 100%;
+      padding: 18px 12px 42px !important;
+    }
+
+    .admin-hero {
+      border-radius: 22px;
+      padding: 22px 18px;
     }
 
     .admin-toolbar {
