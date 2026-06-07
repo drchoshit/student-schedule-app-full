@@ -2230,51 +2230,69 @@ export default function AdminDashboard() {
         />
       </div>
 
-      <div className="border p-4 mb-6 rounded">
+      <div className="admin-settings-panel border p-4 mb-6 rounded">
         <h2 className="text-lg font-semibold mb-2">페이지 설정</h2>
-        <div className="grid grid-cols-2 gap-4">
-          <input
-            type="text"
-            placeholder="이번 주 범위 (예: 7/19~7/24)"
-            value={settings.week_range_text}
-            onChange={(e) => handleChange("week_range_text", e.target.value)}
-            className="border p-2 rounded"
-          />
-          <input
-            type="text"
-            placeholder="외부 일정 설명"
-            value={settings.external_desc}
-            onChange={(e) => handleChange("external_desc", e.target.value)}
-            className="border p-2 rounded"
-          />
-          <input
-            type="text"
-            placeholder="외부 일정 예시"
-            value={settings.external_example}
-            onChange={(e) => handleChange("external_example", e.target.value)}
-            className="border p-2 rounded"
-          />
-          <input
-            type="text"
-            placeholder="센터 일정 설명"
-            value={settings.center_desc}
-            onChange={(e) => handleChange("center_desc", e.target.value)}
-            className="border p-2 rounded"
-          />
-          <input
-            type="text"
-            placeholder="센터 일정 예시"
-            value={settings.center_example}
-            onChange={(e) => handleChange("center_example", e.target.value)}
-            className="border p-2 rounded"
-          />
-          <textarea
-            placeholder="카카오 알림 푸터 메시지 입력"
-            value={settings.notification_footer}
-            onChange={(e) => handleChange("notification_footer", e.target.value)}
-            className="border p-2 rounded col-span-2"
-            rows={3}
-          />
+        <div className="admin-settings-grid">
+          <label className="admin-field admin-field-week">
+            <span>이번 주 범위</span>
+            <input
+              type="text"
+              placeholder="예: 7/19~7/24"
+              value={settings.week_range_text}
+              onChange={(e) => handleChange("week_range_text", e.target.value)}
+              className="border p-2 rounded"
+            />
+          </label>
+          <label className="admin-field">
+            <span>외부 일정 설명</span>
+            <textarea
+              placeholder="외부 일정 설명"
+              value={settings.external_desc}
+              onChange={(e) => handleChange("external_desc", e.target.value)}
+              className="border p-2 rounded"
+              rows={3}
+            />
+          </label>
+          <label className="admin-field">
+            <span>외부 일정 예시</span>
+            <textarea
+              placeholder="외부 일정 예시"
+              value={settings.external_example}
+              onChange={(e) => handleChange("external_example", e.target.value)}
+              className="border p-2 rounded"
+              rows={3}
+            />
+          </label>
+          <label className="admin-field">
+            <span>센터 일정 설명</span>
+            <textarea
+              placeholder="센터 일정 설명"
+              value={settings.center_desc}
+              onChange={(e) => handleChange("center_desc", e.target.value)}
+              className="border p-2 rounded"
+              rows={3}
+            />
+          </label>
+          <label className="admin-field">
+            <span>센터 일정 예시</span>
+            <textarea
+              placeholder="센터 일정 예시"
+              value={settings.center_example}
+              onChange={(e) => handleChange("center_example", e.target.value)}
+              className="border p-2 rounded"
+              rows={3}
+            />
+          </label>
+          <label className="admin-field admin-field-footer">
+            <span>카카오 알림 푸터</span>
+            <textarea
+              placeholder="카카오 알림 푸터 메시지 입력"
+              value={settings.notification_footer}
+              onChange={(e) => handleChange("notification_footer", e.target.value)}
+              className="border p-2 rounded"
+              rows={7}
+            />
+          </label>
         </div>
         <button onClick={saveSettings} className="bg-blue-500 text-white px-4 py-2 rounded mt-4">
           설정 저장
