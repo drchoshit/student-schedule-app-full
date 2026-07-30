@@ -53,6 +53,10 @@ SYNC_DOSIRAK_ADMIN_PASS=admin_password
 
 # ---- mentoring ----
 SYNC_MENTORING_BASE_URL=https://your-mentoring-api-domain
+# recommended: dedicated service-to-service key (same value as
+# STUDENT_SYNC_API_KEY on the mentoring API)
+SYNC_MENTORING_API_KEY=generate_a_long_random_secret
+# legacy fallback only
 SYNC_MENTORING_USERNAME=director_or_admin_username
 SYNC_MENTORING_PASSWORD=director_or_admin_password
 

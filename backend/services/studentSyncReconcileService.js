@@ -179,27 +179,38 @@ async function fetchPenaltyStudents() {
 async function fetchMentoringStudents() {
   const target = "mentoring";
   const baseUrl = process.env.SYNC_MENTORING_BASE_URL;
+  const apiKey = String(process.env.SYNC_MENTORING_API_KEY || "").trim();
   const username = process.env.SYNC_MENTORING_USERNAME;
   const password = process.env.SYNC_MENTORING_PASSWORD;
 
   if (!ensureConfigured(baseUrl)) {
     return { target, status: "skipped", message: "SYNC_MENTORING_BASE_URL not configured", students: [] };
   }
-  if (!username || !password) {
-    return { target, status: "skipped", message: "SYNC_MENTORING_USERNAME/PASSWORD not configured", students: [] };
+  if (!apiKey && (!username || !password)) {
+    return {
+      target,
+      status: "skipped",
+      message: "SYNC_MENTORING_API_KEY or SYNC_MENTORING_USERNAME/PASSWORD not configured",
+      students: []
+    };
   }
 
   try {
-    const loginRes = await doRequest({
-      method: "post",
-      url: apiUrl(baseUrl, "/auth/login"),
-      data: { username, password },
-    });
-    const token = loginRes?.data?.token;
-    if (!token) {
-      throw new Error("mentoring login succeeded but token missing");
+    let authHeaders;
+    if (apiKey) {
+      authHeaders = { "X-Student-Sync-Key": apiKey };
+    } else {
+      const loginRes = await doRequest({
+        method: "post",
+        url: apiUrl(baseUrl, "/auth/login"),
+        data: { username, password },
+      });
+      const token = loginRes?.data?.token;
+      if (!token) {
+        throw new Error("mentoring login succeeded but token missing");
+      }
+      authHeaders = { Authorization: `Bearer ${token}` };
     }
-    const authHeaders = { Authorization: `Bearer ${token}` };
 
     const listRes = await doRequest({
       method: "get",
