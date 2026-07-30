@@ -20,3 +20,5 @@ services:
         value: 20.14.0
       - key: RENDER
         value: "true"
+      - key: SYNC_MENTORING_API_KEY
+        sync: false
